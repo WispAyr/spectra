@@ -1,0 +1,19 @@
+[Unit]
+Description=SPECTRA SDR Intelligence Hub
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/spectra
+ExecStart=/usr/bin/node /opt/spectra/server.js
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spectra
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,103 @@
+{
+  "nrsp": {
+    "host": "192.168.1.100",
+    "webPort": 8080,
+    "rspTcpPort": 1234,
+    "antennaPort": "A",
+    "sampleRate": 2048000,
+    "gainReduction": 40,
+    "frequency": 100000000,
+    "bandwidth": 1536000
+  },
+  "server": {
+    "port": 3333,
+    "uiPort": 3001,
+    "host": "0.0.0.0"
+  },
+  "decoders": {
+    "adsb": {
+      "enabled": true,
+      "frequency": 1090000000,
+      "host": "127.0.0.1",
+      "port": 30005,
+      "jsonPort": 30003
+    },
+    "aprs": {
+      "enabled": true,
+      "frequency": 144800000,
+      "agwpePort": 8000,
+      "callsign": "M0XXX"
+    },
+    "iot": {
+      "enabled": true,
+      "frequency": 433920000,
+      "protocols": [
+        "tpms",
+        "oregon",
+        "lacrosse",
+        "hideki"
+      ]
+    },
+    "radiosonde": {
+      "enabled": false,
+      "scanRange": [
+        400000000,
+        406000000
+      ]
+    },
+    "ais": {
+      "enabled": false,
+      "frequency": 161975000
+    }
+  },
+  "scanner": {
+    "enabled": true,
+    "sweepBands": [
+      {
+        "name": "Airband AM",
+        "start": 118000000,
+        "end": 136975000,
+        "step": 25000
+      },
+      {
+        "name": "Marine VHF",
+        "start": 156000000,
+        "end": 174000000,
+        "step": 25000
+      },
+      {
+        "name": "PMR446",
+        "start": 446006250,
+        "end": 446206250,
+        "step": 12500
+      },
+      {
+        "name": "ISM 433",
+        "start": 433050000,
+        "end": 434790000,
+        "step": 25000
+      },
+      {
+        "name": "LTE/4G 800",
+        "start": 791000000,
+        "end": 821000000,
+        "step": 200000
+      }
+    ],
+    "intervalMinutes": 10,
+    "anomalyThresholdDb": 20
+  },
+  "recording": {
+    "outputDir": "./recordings",
+    "maxSizeMb": 2048,
+    "format": "iq"
+  },
+  "wispacyr": {
+    "enabled": false,
+    "endpoint": "http://localhost:4000/api/signals",
+    "apiKey": ""
+  },
+  "database": {
+    "path": "./db/spectra.db"
+  }
+}

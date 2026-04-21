@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="SPECTRA — SDRplay nRSP-ST Van Intelligence Platform. Real-time spectrum monitoring, ADS-B, APRS, and IoT signal decoding.">
+<title>SPECTRA — SDR Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="/css/spectra.css">
+</head>
+<body>
+<!-- Animated background -->
+<div class="bg-grid"></div>
+<div class="bg-glow bg-glow--1"></div>
+<div class="bg-glow bg-glow--2"></div>
+
+<!-- Sidebar Nav -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar__logo">
+    <div class="sidebar__logo-icon">
+      <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="1.5"/><path d="M8 16h2m14 0h-2M16 8v2m0 12v-2M11 11l1.5 1.5m8 8L19 19M21 11l-1.5 1.5m-8 8L13 19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="16" r="3" fill="currentColor"/></svg>
+    </div>
+    <span class="sidebar__logo-text">SPECTRA</span>
+  </div>
+
+  <div class="sidebar__status" id="sdr-status">
+    <div class="status-dot status-dot--demo" id="status-dot"></div>
+    <span id="status-text">Demo Mode</span>
+  </div>
+
+  <ul class="sidebar__nav">
+    <li><a href="#" class="nav-item active" data-page="dashboard" id="nav-dashboard">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
+      <span>Dashboard</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="waterfall" id="nav-waterfall">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M3 18h18M3 12l4-4 4 4 4-6 4 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Spectrum</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="adsb" id="nav-adsb">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M12 2L8 8H3l4 4-1.5 6L12 15l6.5 3L17 12l4-4h-5L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <span>ADS-B</span>
+      <span class="nav-badge" id="badge-adsb">0</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="aprs" id="nav-aprs">
+      <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.636 5.636l2.121 2.121M16.243 16.243l2.121 2.121M5.636 18.364l2.121-2.121M16.243 7.757l2.121-2.121" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span>APRS</span>
+      <span class="nav-badge" id="badge-aprs">0</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="iot" id="nav-iot">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="7" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 7V5a4 4 0 018 0v2M12 11v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="15" r="1" fill="currentColor"/></svg>
+      <span>IoT Signals</span>
+      <span class="nav-badge" id="badge-iot">0</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="scanner" id="nav-scanner">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="6" r="2" fill="var(--accent-cyan)" stroke="none"/><circle cx="14" cy="12" r="2" fill="var(--accent-yellow)" stroke="none"/><circle cx="10" cy="18" r="2" fill="var(--accent-green)" stroke="none"/></svg>
+      <span>RF Scanner</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="recorder" id="nav-recorder">
+      <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="3" fill="var(--accent-red)"/></svg>
+      <span>Recorder</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="nrsp" id="nav-nrsp">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 10h2m0 0v4m0-4h4m0 0v4m2-4h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span>nRSP-ST</span>
+    </a></li>
+    <li><a href="#" class="nav-item" data-page="settings" id="nav-settings">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.5"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="1.5"/></svg>
+      <span>Settings</span>
+    </a></li>
+  </ul>
+
+  <div class="sidebar__footer">
+    <div class="sidebar__uptime" id="uptime-display">UP 00:00:00</div>
+    <div class="sidebar__freq" id="freq-display">100.000 MHz</div>
+  </div>
+</nav>
+
+<!-- Main Content -->
+<main class="main" id="main-content">
+
+  <!-- ── Dashboard ─────────────────────────────────────────── -->
+  <section class="page active" id="page-dashboard">
+    <div class="page-header">
+      <h1 class="page-title">Intelligence Dashboard</h1>
+      <div class="page-subtitle" id="dash-subtitle">SDRplay nRSP-ST · 1 kHz – 2 GHz</div>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card stat-card--aircraft" id="stat-aircraft">
+        <div class="stat-card__icon">✈</div>
+        <div class="stat-card__value" id="stat-aircraft-val">0</div>
+        <div class="stat-card__label">Aircraft</div>
+        <div class="stat-card__sub">ADS-B 1090 MHz</div>
+        <div class="stat-card__spark" id="spark-aircraft"></div>
+      </div>
+      <div class="stat-card stat-card--aprs" id="stat-aprs">
+        <div class="stat-card__icon">📡</div>
+        <div class="stat-card__value" id="stat-aprs-val">0</div>
+        <div class="stat-card__label">APRS Stations</div>
+        <div class="stat-card__sub">144.800 MHz</div>
+        <div class="stat-card__spark" id="spark-aprs"></div>
+      </div>
+      <div class="stat-card stat-card--iot" id="stat-iot">
+        <div class="stat-card__icon">🔌</div>
+        <div class="stat-card__value" id="stat-iot-val">0</div>
+        <div class="stat-card__label">IoT Devices</div>
+        <div class="stat-card__sub">ISM 433/868 MHz</div>
+        <div class="stat-card__spark" id="spark-iot"></div>
+      </div>
+      <div class="stat-card stat-card--scan" id="stat-scan">
+        <div class="stat-card__icon">📻</div>
+        <div class="stat-card__value" id="stat-scan-val">0</div>
+        <div class="stat-card__label">Signals Logged</div>
+        <div class="stat-card__sub">All bands</div>
+        <div class="stat-card__spark" id="spark-scan"></div>
+      </div>
+    </div>
+
+    <div class="dash-grid">
+      <!-- Mini waterfall -->
+      <div class="panel panel--waterfall">
+        <div class="panel__header">
+          <span class="panel__title">Live Spectrum</span>
+          <span class="panel__freq" id="dash-freq-label">100.000 MHz</span>
+        </div>
+        <canvas id="dash-waterfall" class="mini-waterfall"></canvas>
+      </div>
+
+      <!-- Live aircraft list -->
+      <div class="panel panel--list">
+        <div class="panel__header">
+          <span class="panel__title">Aircraft</span>
+          <button class="panel__action" onclick="goTo('adsb')">View map →</button>
+        </div>
+        <div class="live-list" id="dash-aircraft-list">
+          <div class="live-list__empty">Acquiring signals…</div>
+        </div>
+      </div>
+
+      <!-- IoT devices -->
+      <div class="panel panel--list">
+        <div class="panel__header">
+          <span class="panel__title">IoT Devices</span>
+          <button class="panel__action" onclick="goTo('iot')">View all →</button>
+        </div>
+        <div class="live-list" id="dash-iot-list">
+          <div class="live-list__empty">Scanning ISM bands…</div>
+        </div>
+      </div>
+
+      <!-- Signal log -->
+      <div class="panel panel--log">
+        <div class="panel__header">
+          <span class="panel__title">Signal Log</span>
+          <div class="panel__filters">
+            <button class="filter-btn active" data-type="all">All</button>
+            <button class="filter-btn" data-type="adsb">ADS-B</button>
+            <button class="filter-btn" data-type="aprs">APRS</button>
+            <button class="filter-btn" data-type="iot">IoT</button>
+          </div>
+        </div>
+        <div class="signal-log" id="signal-log-feed"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Spectrum Waterfall ─────────────────────────────────── -->
+  <section class="page" id="page-waterfall">
+    <div class="waterfall-controls">
+      <div class="wf-control-group">
+        <label>Frequency</label>
+        <div class="freq-input-wrap">
+          <input type="number" id="wf-freq-input" class="freq-input" value="100" step="0.025">
+          <span class="freq-unit">MHz</span>
+        </div>
+      </div>
+      <div class="wf-control-group">
+        <label>Bandwidth</label>
+        <select id="wf-bw-select" class="wf-select">
+          <option value="200000">200 kHz</option>
+          <option value="500000">500 kHz</option>
+          <option value="1536000" selected>1.536 MHz</option>
+          <option value="2048000">2.048 MHz</option>
+          <option value="5000000">5 MHz</option>
+          <option value="10000000">10 MHz</option>
+        </select>
+      </div>
+      <div class="wf-control-group">
+        <label>Antenna</label>
+        <select id="wf-ant-select" class="wf-select">
+          <option value="A">Port A (SMA)</option>
+          <option value="B">Port B (SMA)</option>
+          <option value="C">Port C (BNC)</option>
+        </select>
+      </div>
+      <div class="wf-control-group">
+        <label>Gain Red.</label>
+        <input type="range" id="wf-gain" min="0" max="59" value="40" class="gain-slider">
+        <span id="wf-gain-val">40 dB</span>
+      </div>
+      <div class="wf-control-group">
+        <label>Speed</label>
+        <select id="wf-speed-select" class="wf-select">
+          <option value="100">Fast</option>
+          <option value="250" selected>Normal</option>
+          <option value="500">Slow</option>
+        </select>
+      </div>
+      <button class="btn btn--primary" id="wf-tune-btn">TUNE</button>
+      <div class="wf-quick-bands">
+        <button class="band-btn" data-freq="100" data-bw="5000000">FM</button>
+        <button class="band-btn" data-freq="118.1" data-bw="1536000">Air</button>
+        <button class="band-btn" data-freq="144.8" data-bw="500000">APRS</button>
+        <button class="band-btn" data-freq="433.92" data-bw="2048000">ISM</button>
+        <button class="band-btn" data-freq="1090" data-bw="2048000">ADS-B</button>
+      </div>
+    </div>
+
+    <div class="waterfall-wrap">
+      <div class="waterfall-freq-axis" id="wf-freq-axis"></div>
+      <canvas id="wf-canvas" class="waterfall-canvas"></canvas>
+      <div class="waterfall-power-axis" id="wf-power-axis">
+        <span>-60</span><span>-70</span><span>-80</span><span>-90 dBm</span>
+      </div>
+    </div>
+    <div class="spectrum-line-wrap">
+      <canvas id="spectrum-canvas" class="spectrum-canvas"></canvas>
+    </div>
+    <div class="wf-info-bar">
+      <span id="wf-cursor-freq">—</span>
+      <span id="wf-cursor-power">—</span>
+      <span id="wf-center">Center: <b id="wf-center-val">100.000 MHz</b></span>
+      <span id="wf-demo-badge" class="demo-badge">DEMO MODE</span>
+    </div>
+  </section>
+
+  <!-- ── ADS-B Map ──────────────────────────────────────────── -->
+  <section class="page" id="page-adsb">
+    <div class="map-overlay-controls">
+      <div class="map-stat">✈ <span id="adsb-count">0</span> aircraft</div>
+      <label class="toggle-label"><input type="checkbox" id="adsb-trails" checked> Trails</label>
+      <label class="toggle-label"><input type="checkbox" id="adsb-labels" checked> Labels</label>
+    </div>
+    <div id="adsb-map" class="map-container"></div>
+    <div class="map-sidebar">
+      <div class="map-sidebar__header">Aircraft List</div>
+      <div class="aircraft-list" id="aircraft-table"></div>
+    </div>
+  </section>
+
+  <!-- ── APRS Map ───────────────────────────────────────────── -->
+  <section class="page" id="page-aprs">
+    <div class="map-overlay-controls">
+      <div class="map-stat">📡 <span id="aprs-count">0</span> stations</div>
+    </div>
+    <div id="aprs-map" class="map-container"></div>
+    <div class="map-sidebar">
+      <div class="map-sidebar__header">APRS Messages</div>
+      <div class="aprs-messages" id="aprs-message-list"></div>
+    </div>
+  </section>
+
+  <!-- ── IoT Signals ────────────────────────────────────────── -->
+  <section class="page" id="page-iot">
+    <div class="page-header">
+      <h1 class="page-title">IoT Signal Decoder</h1>
+      <div class="page-subtitle">ISM 433/868 MHz · rtl_433 · TPMS · Weather · Security</div>
+    </div>
+    <div class="iot-grid" id="iot-device-grid"></div>
+  </section>
+
+  <!-- ── RF Scanner ─────────────────────────────────────────── -->
+  <section class="page" id="page-scanner">
+    <div class="page-header">
+      <h1 class="page-title">RF Band Scanner</h1>
+      <div class="scanner-controls">
+        <select id="scan-band-select" class="wf-select"></select>
+        <button class="btn btn--primary" id="scan-trigger-btn">▶ Sweep Now</button>
+      </div>
+    </div>
+    <div class="scan-chart-wrap">
+      <canvas id="scan-chart" class="scan-chart"></canvas>
+    </div>
+    <div class="scan-anomalies">
+      <div class="panel__header"><span class="panel__title">⚠ Anomalies Detected</span></div>
+      <div class="anomaly-list" id="anomaly-list"></div>
+    </div>
+    <div class="scan-history">
+      <div class="panel__header"><span class="panel__title">Sweep History</span></div>
+      <div class="sweep-list" id="sweep-list"></div>
+    </div>
+  </section>
+
+  <!-- ── Recorder ───────────────────────────────────────────── -->
+  <section class="page" id="page-recorder">
+    <div class="page-header">
+      <h1 class="page-title">IQ Recorder</h1>
+    </div>
+    <div class="recorder-controls glass-card">
+      <div class="rec-field">
+        <label>Frequency (MHz)</label>
+        <input type="number" id="rec-freq" class="freq-input" value="100" step="0.025">
+      </div>
+      <div class="rec-field">
+        <label>Bandwidth</label>
+        <select id="rec-bw" class="wf-select">
+          <option value="200000">200 kHz</option>
+          <option value="1536000" selected>1.536 MHz</option>
+          <option value="2048000">2.048 MHz</option>
+        </select>
+      </div>
+      <div class="rec-field">
+        <label>Duration (0=unlimited)</label>
+        <input type="number" id="rec-duration" class="freq-input" value="0" min="0">
+      </div>
+      <div class="rec-field">
+        <label>Label</label>
+        <input type="text" id="rec-label" class="freq-input" placeholder="Optional label">
+      </div>
+      <button class="btn btn--record" id="rec-start-btn">⏺ Start Recording</button>
+    </div>
+    <div class="recordings-list">
+      <div class="panel__header"><span class="panel__title">Recordings</span></div>
+      <div id="recordings-grid" class="recordings-grid"></div>
+    </div>
+  </section>
+
+  <!-- ── nRSP-ST Native UI ──────────────────────────────────── -->
+  <section class="page" id="page-nrsp">
+    <div class="page-header">
+      <h1 class="page-title">nRSP-ST Control</h1>
+      <div class="page-subtitle">Native SDRplay web interface</div>
+    </div>
+    <div class="nrsp-embed-wrap">
+      <div class="nrsp-embed-bar">
+        <span id="nrsp-url-display">Loading…</span>
+        <a id="nrsp-open-link" href="#" target="_blank" class="btn btn--sm">Open in tab ↗</a>
+      </div>
+      <iframe id="nrsp-iframe" class="nrsp-iframe" src="about:blank" title="nRSP-ST Native Interface"></iframe>
+    </div>
+  </section>
+
+  <!-- ── Settings ───────────────────────────────────────────── -->
+  <section class="page" id="page-settings">
+    <div class="page-header">
+      <h1 class="page-title">Settings</h1>
+    </div>
+    <div class="settings-grid">
+      <div class="glass-card settings-card">
+        <h3>nRSP-ST Connection</h3>
+        <div class="field-group">
+          <label>IP Address</label>
+          <input type="text" id="set-nrsp-host" class="freq-input" value="192.168.1.100">
+        </div>
+        <div class="field-group">
+          <label>Web Port</label>
+          <input type="number" id="set-nrsp-webport" class="freq-input" value="8080">
+        </div>
+        <div class="field-group">
+          <label>rsp_tcp Port</label>
+          <input type="number" id="set-nrsp-tcpport" class="freq-input" value="1234">
+        </div>
+        <div class="field-group">
+          <label>Default Antenna</label>
+          <select id="set-antenna" class="wf-select">
+            <option value="A">Port A (SMA, 1kHz–2GHz)</option>
+            <option value="B">Port B (SMA, 1kHz–2GHz)</option>
+            <option value="C">Port C (BNC, 1kHz–200MHz)</option>
+          </select>
+        </div>
+        <button class="btn btn--primary" id="save-nrsp-btn">Save & Reconnect</button>
+      </div>
+      <div class="glass-card settings-card">
+        <h3>Decoders</h3>
+        <div class="decoder-toggle" id="decoder-toggles"></div>
+      </div>
+      <div class="glass-card settings-card">
+        <h3>System</h3>
+        <div class="sys-info" id="sys-info"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="/js/app.js"></script>
+<script src="/js/waterfall.js"></script>
+<script src="/js/adsb-map.js"></script>
+<script src="/js/aprs-map.js"></script>
+<script src="/js/widgets.js"></script>
+</body>
+</html>
