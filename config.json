@@ -92,7 +92,7 @@
     "maxSizeMb": 2048,
     "format": "iq"
   },
-  "wispacyr": {
+  "wispayr": {
     "enabled": false,
     "endpoint": "http://localhost:4000/api/signals",
     "apiKey": ""
