@@ -1,0 +1,29 @@
+# SDRconnect headless server — bridges nRSP-ST (or any LAN-discoverable
+# SDRplay device) onto a local WebSocket so SPECTRA can drive it without
+# needing libusb access to the radio.
+#
+# Install:
+#   sudo cp systemd/sdrconnect-headless.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sdrconnect-headless
+#
+# Adjust User=, WorkingDirectory= and ExecStart= for your install.
+
+[Unit]
+Description=SDRconnect Headless Server (nRSP-ST WebSocket bridge)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wispayr
+Group=wispayr
+WorkingDirectory=/opt/sdrconnect
+ExecStart=/opt/sdrconnect/SDRconnect_headless --websocket_port=9100
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/sdrconnect-headless.log
+StandardError=append:/var/log/sdrconnect-headless.log
+
+[Install]
+WantedBy=multi-user.target

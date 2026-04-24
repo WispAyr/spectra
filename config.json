@@ -1,13 +1,15 @@
 {
   "nrsp": {
-    "host": "192.168.1.100",
+    "host": "127.0.0.1",
     "webPort": 8080,
     "rspTcpPort": 1234,
     "antennaPort": "A",
     "sampleRate": 2048000,
     "gainReduction": 40,
     "frequency": 100000000,
-    "bandwidth": 1536000
+    "bandwidth": 1536000,
+    "wsPort": 9100,
+    "iqStream": false
   },
   "server": {
     "port": 3333,
