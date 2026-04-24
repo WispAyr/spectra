@@ -119,6 +119,7 @@ const recorder = new RecordingManager(config.recording, sdrManager, {
 
 // Status
 app.get('/api/status', (req, res) => {
+  const fft = sdrManager.getLastFft();
   res.json({
     connected: state.connected,
     uptime: Math.floor((Date.now() - state.startTime) / 1000),
@@ -126,8 +127,18 @@ app.get('/api/status', (req, res) => {
     aprsCount: Object.keys(state.aprsStations).length,
     iotDeviceCount: Object.keys(state.iotDevices).length,
     signalCounts: state.signalCounts,
+    sdr: {
+      connected: fft.connected,
+      activeDevice: fft.activeDevice,
+      frequency: fft.frequency,
+      bandwidth: fft.bandwidth,
+      signalPower: fft.signalPower,
+      signalSnr: fft.signalSnr,
+      lastSpectrumAt: fft.timestamp
+    },
+    scanner: scanner ? scanner.status() : { running: false, realDataAvailable: false, backend: null },
     config: {
-      nrsp: { host: config.nrsp.host, webPort: config.nrsp.webPort },
+      nrsp: { host: config.nrsp.host, wsPort: config.nrsp.wsPort },
       decoders: Object.fromEntries(
         Object.entries(config.decoders).map(([k, v]) => [k, { enabled: v.enabled }])
       )

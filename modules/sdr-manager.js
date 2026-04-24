@@ -64,6 +64,7 @@ class SdrManager extends EventEmitter {
     this.ws.on("close", (code) => {
       const wasConnected = this.connected;
       this.connected = false;
+      this._serialSelected = false;
       if (this.keepaliveTimer) { clearInterval(this.keepaliveTimer); this.keepaliveTimer = null; }
       this.onStatus({ connected: false, error: `closed:${code}`, demoMode: !wasConnected });
       this._scheduleReconnect();
@@ -78,6 +79,10 @@ class SdrManager extends EventEmitter {
     this._send({ event_type: "device_stream_enable", value: "true", device: "primary" });
     this._sendTune();
     this._send({ event_type: "spectrum_enable", value: "true", device: "primary" });
+    // Audio stream gates the demodulator chain which produces signal_power /
+    // signal_snr property events. Audio binary frames (0x0001) are dropped
+    // unconsumed in _handleBinary.
+    this._send({ event_type: "audio_stream_enable", value: "true", device: "primary" });
     if (this.config.iqStream) {
       this._send({ event_type: "iq_stream_enable", value: "true", device: "primary" });
     }
@@ -123,7 +128,16 @@ class SdrManager extends EventEmitter {
     const val = msg.value;
     if (ev === "property_changed" || ev === "get_property_response") {
       switch (prop) {
-        case "active_device": this.activeDevice = val; break;
+        case "active_device":
+          this.activeDevice = val;
+          if (val && !this._serialSelected) {
+            const m = val.match(/\((\d+)\)/);
+            if (m) {
+              this._serialSelected = true;
+              this._send({ event_type: "selected_device_serial", value: m[1], device: "primary" });
+            }
+          }
+          break;
         case "signal_power": this.signalPower = parseFloat(val); break;
         case "signal_snr": this.signalSnr = parseFloat(val); break;
         case "device_center_frequency": this.config.frequency = parseInt(val, 10) || this.config.frequency; break;
