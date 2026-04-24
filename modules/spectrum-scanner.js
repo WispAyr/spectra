@@ -1,10 +1,13 @@
 /**
  * spectrum-scanner.js — Scheduled frequency band sweeper
- * Uses soapy_power via subprocess for wideband FFT sweeps
- * Falls back to mock FFT from sdr-manager in demo mode
+ *
+ * Drives soapy_power against a SoapySDR-attached USB SDR (typically a
+ * spare RTL-SDR dongle, distinct from the primary nRSP-ST so band sweeps
+ * do not yank the primary tune). If soapy_power is not installed, the
+ * scanner stays disabled rather than fabricating data.
  */
 
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require("child_process");
 
 class SpectrumScanner {
   constructor(config, sdrManager, callbacks) {
@@ -15,26 +18,51 @@ class SpectrumScanner {
     this.running = false;
     this.timer = null;
     this.currentBandIdx = 0;
-    this.baseline = {}; // band name -> baseline power levels
+    this.baseline = {};
+    this.realDataAvailable = this._probeSoapyPower();
+  }
+
+  _probeSoapyPower() {
+    try {
+      execFileSync("which", ["soapy_power"], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   start() {
+    if (!this.realDataAvailable) {
+      console.warn("[Scanner] soapy_power not found — scanner disabled (no fabricated data)");
+      return;
+    }
     this.running = true;
-    console.log('[Scanner] Starting spectrum scanner');
+    console.log("[Scanner] Starting spectrum scanner");
     this._scheduleSweep();
   }
 
   stop() {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
-    console.log('[Scanner] Scanner stopped');
+    console.log("[Scanner] Scanner stopped");
   }
 
   triggerImmediate(bandName) {
+    if (!this.realDataAvailable) return null;
     const band = bandName
       ? this.config.sweepBands.find(b => b.name === bandName)
       : this.config.sweepBands[this.currentBandIdx];
     if (band) this._sweep(band);
+    return band || null;
+  }
+
+  status() {
+    return {
+      running: this.running,
+      realDataAvailable: this.realDataAvailable,
+      backend: this.realDataAvailable ? "soapy_power" : null,
+      currentBandIdx: this.currentBandIdx
+    };
   }
 
   _scheduleSweep() {
@@ -44,7 +72,6 @@ class SpectrumScanner {
 
     this._sweep(band);
 
-    // Stagger sweeps so they don't all hit at once
     const delay = (this.config.intervalMinutes * 60 * 1000) / this.config.sweepBands.length;
     this.timer = setTimeout(() => this._scheduleSweep(), delay);
   }
@@ -53,34 +80,32 @@ class SpectrumScanner {
     if (!band) return;
     console.log(`[Scanner] Sweeping ${band.name} (${(band.start / 1e6).toFixed(1)}-${(band.end / 1e6).toFixed(1)} MHz)`);
 
-    // Try soapy_power first; fallback to mock
     const args = [
-      '-f', `${band.start}:${band.end}:${band.step}`,
-      '-g', '40',
-      '-d', 'driver=soapy,driver=rtlsdr',
-      '-1'  // Single sweep
+      "-f", `${band.start}:${band.end}:${band.step}`,
+      "-g", "40",
+      "-d", "driver=soapy,driver=rtlsdr",
+      "-1"
     ];
 
     let proc;
     try {
-      proc = spawn('soapy_power', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      proc = spawn("soapy_power", args, { stdio: ["ignore", "pipe", "pipe"] });
     } catch (e) {
-      // soapy_power not available — use mock
-      this._mockSweep(band);
+      console.warn(`[Scanner] soapy_power spawn failed: ${e.message}`);
       return;
     }
 
     const lines = [];
 
-    proc.stdout.on('data', data => {
-      data.toString().split('\n').forEach(l => {
+    proc.stdout.on("data", data => {
+      data.toString().split("\n").forEach(l => {
         if (l.trim()) lines.push(l.trim());
       });
     });
 
-    proc.on('close', (code) => {
+    proc.on("close", () => {
       if (lines.length === 0) {
-        this._mockSweep(band);
+        console.warn(`[Scanner] ${band.name}: no soapy_power output — skipping (no mock fallback)`);
         return;
       }
       const result = this._parseSoapyPowerOutput(lines, band);
@@ -90,21 +115,19 @@ class SpectrumScanner {
       }
     });
 
-    proc.on('error', () => {
-      this._mockSweep(band);
+    proc.on("error", (err) => {
+      console.warn(`[Scanner] soapy_power error for ${band.name}: ${err.message}`);
     });
   }
 
   _parseSoapyPowerOutput(lines, band) {
-    // soapy_power CSV: date, time, Hz low, Hz high, Hz step, samples, dB...
     const freqs = [];
     const powers = [];
 
     lines.forEach(line => {
-      const parts = line.split(',');
+      const parts = line.split(",");
       if (parts.length < 7) return;
       const low = parseFloat(parts[2]);
-      const high = parseFloat(parts[3]);
       const step = parseFloat(parts[4]);
       const dbValues = parts.slice(6).map(Number);
       let f = low;
@@ -125,63 +148,8 @@ class SpectrumScanner {
       freqs,
       powers,
       timestamp: Date.now(),
-      source: 'soapy_power'
+      source: "soapy_power"
     };
-  }
-
-  _mockSweep(band) {
-    const freqs = [];
-    const powers = [];
-    const steps = Math.floor((band.end - band.start) / band.step);
-
-    for (let i = 0; i <= steps; i++) {
-      const f = band.start + i * band.step;
-      freqs.push(f);
-
-      // Realistic noise floor with occasional signals
-      let power = -90 + Math.random() * 5;
-      if (Math.random() < 0.05) power += 15 + Math.random() * 25;
-
-      // Known signals in each band
-      power = this._addKnownBandSignals(power, f, band.name);
-      powers.push(Math.round(power * 10) / 10);
-    }
-
-    const result = {
-      band: band.name,
-      start: band.start,
-      end: band.end,
-      step: band.step,
-      freqs,
-      powers,
-      timestamp: Date.now(),
-      source: 'demo'
-    };
-
-    this.onSweep(result);
-    this._detectAnomalies(result, band);
-  }
-
-  _addKnownBandSignals(basePower, freq, bandName) {
-    switch (bandName) {
-      case 'Airband AM':
-        // Airport control channels
-        if ([118.1e6, 119.0e6, 121.5e6, 131.3e6].some(f => Math.abs(freq - f) < 12500)) {
-          return basePower + 30 + Math.random() * 10;
-        }
-        break;
-      case 'Marine VHF':
-        if ([156.8e6, 162.025e6, 156.0e6].some(f => Math.abs(freq - f) < 12500)) {
-          return basePower + 20 + Math.random() * 15;
-        }
-        break;
-      case 'ISM 433':
-        if (Math.abs(freq - 433.92e6) < 50000) {
-          return basePower + 25 + Math.random() * 15;
-        }
-        break;
-    }
-    return basePower;
   }
 
   _detectAnomalies(result, band) {
@@ -209,7 +177,6 @@ class SpectrumScanner {
       }
     });
 
-    // Update baseline with slow decay
     this.baseline[band.name] = result.powers.map((p, i) =>
       ((bl[i] || -90) * 0.9 + p * 0.1)
     );
