@@ -59,48 +59,9 @@ class RecordingManager {
   }
 
   start({ frequency, bandwidth, duration, label }) {
-    const id = uuidv4().slice(0, 8);
-    const freq = frequency || this.sdrManager.config.frequency;
-    const bw = bandwidth || this.sdrManager.config.bandwidth;
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `${ts}_${(freq / 1e6).toFixed(3)}MHz_${id}.iq`;
-    const outputPath = path.join(this.config.outputDir, filename);
-
-    console.log(`[Recorder] Starting recording: ${filename}`);
-
-    const rec = {
-      id,
-      filename,
-      path: outputPath,
-      frequency: freq,
-      bandwidth: bw,
-      label: label || `${(freq / 1e6).toFixed(3)} MHz`,
-      started: Date.now(),
-      duration: duration || null,
-      active: true,
-      size: 0
-    };
-
-    // In real implementation: pipe rsp_tcp IQ stream to file
-    // Here we simulate with a timer that tracks elapsed time
-    const sizeTimer = setInterval(() => {
-      if (!this.activeRecordings.has(id)) {
-        clearInterval(sizeTimer);
-        return;
-      }
-      rec.size += bw * 2 * 2; // 2 bytes per I/Q sample
-      rec.elapsed = Math.floor((Date.now() - rec.started) / 1000);
-
-      // Auto-stop if duration exceeded
-      if (duration && rec.elapsed >= duration) {
-        this.stop(id);
-      }
-    }, 1000);
-
-    this.activeRecordings.set(id, { rec, proc: null, sizeTimer });
-    this.recordings.unshift(rec);
-    this.onStart(rec);
-    return rec;
+    // IQ capture pipeline (rsp_tcp → file) is not yet wired. Refuse to start
+    // rather than create a fake-growing-size recording entry.
+    return { error: 'IQ recording not implemented — no rsp_tcp pipeline wired to disk' };
   }
 
   stop(id) {

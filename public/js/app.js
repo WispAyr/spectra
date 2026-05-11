@@ -53,7 +53,8 @@ const App = (() => {
         msg.data.aprsStations.forEach(s => { state.aprsStations[s.callsign] = s; });
         msg.data.iotDevices.forEach(d => { state.iotDevices[`${d.model}_${d.id}`] = d; });
         state.signalCounts = msg.data.signalCounts;
-        state.connected = !msg.data.demoMode;
+        state.connected = !!msg.data.connected;
+        updateStatus(state.connected, !state.connected);
         refreshAll();
         break;
       case 'adsb_update':
@@ -91,7 +92,7 @@ const App = (() => {
         break;
       case 'sdr_status':
         state.connected = msg.data.connected;
-        updateStatus(msg.data.connected, msg.data.demoMode);
+        updateStatus(msg.data.connected);
         break;
       case 'heartbeat':
         state.uptime = msg.data.uptime;
@@ -156,12 +157,12 @@ const App = (() => {
     setText('badge-iot', io);
   }
 
-  function updateStatus(connected, demoMode) {
+  function updateStatus(connected) {
     const dot = document.getElementById('status-dot');
     const txt = document.getElementById('status-text');
     if (!dot || !txt) return;
-    dot.className = `status-dot status-dot--${connected ? 'connected' : 'demo'}`;
-    txt.textContent = connected ? 'Connected' : 'Demo Mode';
+    dot.className = `status-dot status-dot--${connected ? 'connected' : 'offline'}`;
+    txt.textContent = connected ? 'Connected' : 'Offline';
   }
 
   function updateHeartbeat(data) {
