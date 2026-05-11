@@ -127,7 +127,7 @@ const App = (() => {
     if (page === 'waterfall' && window.Waterfall) Waterfall.init();
     if (page === 'scanner' && window.Scanner) Scanner.init();
     if (page === 'settings') renderSettings();
-    if (page === 'nrsp') loadNrspIframe();
+    if (page === 'nrsp') startNrspPolling();
   }
 
   // ── UI Updates ───────────────────────────────────────────────
@@ -264,16 +264,73 @@ const App = (() => {
     fetch(`/api/decoders/${name}/toggle`, { method: 'POST' });
   };
 
-  // ── nRSP iframe ───────────────────────────────────────────────
-  function loadNrspIframe() {
-    fetch('/api/nrsp/weburl').then(r => r.json()).then(({ url }) => {
-      const frame = document.getElementById('nrsp-iframe');
-      const urlEl = document.getElementById('nrsp-url-display');
-      const link = document.getElementById('nrsp-open-link');
-      if (frame && frame.src === 'about:blank') frame.src = url;
-      if (urlEl) urlEl.textContent = url;
-      if (link) link.href = url;
+  // ── nRSP-ST control panel ─────────────────────────────────────
+  let nrspFormHydrated = false;
+  let nrspPollTimer = null;
+  function startNrspPolling() {
+    loadNrspPanel();
+    if (nrspPollTimer) clearInterval(nrspPollTimer);
+    nrspPollTimer = setInterval(() => {
+      const visible = document.getElementById('page-nrsp')?.classList.contains('active');
+      if (!visible) { clearInterval(nrspPollTimer); nrspPollTimer = null; return; }
+      loadNrspPanel();
+    }, 2000);
+  }
+  function loadNrspPanel() {
+    fetch('/api/status').then(r => r.json()).then((s) => {
+      const sdr = s.sdr || {};
+      const fmtHz = (hz) => hz == null ? '—' : (hz >= 1e6 ? `${(hz / 1e6).toFixed(3)} MHz` : `${(hz / 1e3).toFixed(1)} kHz`);
+      const fmtDb = (v) => v == null ? '—' : `${v.toFixed(1)} dB`;
+      const fmtAge = (ts) => {
+        if (!ts) return '—';
+        const age = Math.floor((Date.now() - ts) / 1000);
+        if (age < 0) return 'just now';
+        if (age < 60) return `${age}s ago`;
+        return `${Math.floor(age / 60)}m ${age % 60}s ago`;
+      };
+      setText('nrsp-device', sdr.activeDevice || 'no device');
+      const conn = document.getElementById('nrsp-conn');
+      if (conn) conn.textContent = sdr.connected ? 'connected' : 'offline';
+      setText('nrsp-freq', fmtHz(sdr.frequency));
+      setText('nrsp-bw', fmtHz(sdr.bandwidth));
+      setText('nrsp-power', fmtDb(sdr.signalPower));
+      setText('nrsp-snr', fmtDb(sdr.signalSnr));
+      setText('nrsp-last', fmtAge(sdr.lastSpectrumAt));
     }).catch(() => {});
+
+    if (!nrspFormHydrated) {
+      fetch('/api/nrsp/config').then(r => r.json()).then((c) => {
+        const freqEl = document.getElementById('nrsp-set-freq');
+        const bwEl = document.getElementById('nrsp-set-bw');
+        const antEl = document.getElementById('nrsp-set-ant');
+        const gainEl = document.getElementById('nrsp-set-gain');
+        if (freqEl && c.frequency) freqEl.value = (c.frequency / 1e6).toFixed(3);
+        if (bwEl && c.bandwidth) bwEl.value = String(c.bandwidth);
+        if (antEl && c.antennaPort) antEl.value = c.antennaPort;
+        if (gainEl && c.gainReduction != null) gainEl.value = c.gainReduction;
+        nrspFormHydrated = true;
+      }).catch(() => {});
+
+      const wsEl = document.getElementById('nrsp-ws-endpoint');
+      if (wsEl) wsEl.textContent = `ws://${location.hostname}:9100`;
+
+      document.getElementById('nrsp-apply')?.addEventListener('click', () => {
+        const status = document.getElementById('nrsp-apply-status');
+        const freq = parseFloat(document.getElementById('nrsp-set-freq').value) * 1e6;
+        const bw = parseInt(document.getElementById('nrsp-set-bw').value);
+        const ant = document.getElementById('nrsp-set-ant').value;
+        const gain = parseInt(document.getElementById('nrsp-set-gain').value);
+        if (status) status.textContent = 'applying…';
+        fetch('/api/nrsp/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ frequency: freq, bandwidth: bw, antennaPort: ant, gainReduction: gain })
+        })
+          .then(r => r.json())
+          .then(j => { if (status) status.textContent = j.success ? `applied ${new Date().toLocaleTimeString()}` : (j.error || 'failed'); })
+          .catch(e => { if (status) status.textContent = `error: ${e.message}`; });
+      });
+    }
   }
 
   // ── Waterfall controls ────────────────────────────────────────
