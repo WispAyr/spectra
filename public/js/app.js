@@ -311,8 +311,19 @@ const App = (() => {
         nrspFormHydrated = true;
       }).catch(() => {});
 
+      const host = location.hostname;
       const wsEl = document.getElementById('nrsp-ws-endpoint');
-      if (wsEl) wsEl.textContent = `ws://${location.hostname}:9100`;
+      if (wsEl) wsEl.textContent = `ws://${host}:9100`;
+      const webUrl = `http://${host}:9001/`;
+      const httpsUrl = `https://${host}:8081/`;
+      const webLink = document.getElementById('nrsp-web-link');
+      if (webLink) { webLink.textContent = webUrl; webLink.href = webUrl; }
+      const webOpen = document.getElementById('nrsp-web-open');
+      if (webOpen) webOpen.href = webUrl;
+      const httpsEl = document.getElementById('nrsp-https-endpoint');
+      if (httpsEl) httpsEl.textContent = httpsUrl;
+      const frame = document.getElementById('nrsp-web-iframe');
+      if (frame && frame.src === 'about:blank') frame.src = webUrl;
 
       document.getElementById('nrsp-apply')?.addEventListener('click', () => {
         const status = document.getElementById('nrsp-apply-status');

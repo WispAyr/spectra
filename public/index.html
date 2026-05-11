@@ -383,11 +383,21 @@
       </div>
 
       <div class="glass-card settings-card">
-        <h3>External clients</h3>
-        <p class="muted">SDRconnect headless exposes the radio as a WebSocket I/Q server. Point a desktop SDRconnect client at this endpoint:</p>
-        <div class="field-group"><label>WebSocket endpoint</label><div class="freq-input" id="nrsp-ws-endpoint">ws://10.200.0.11:9100</div></div>
-        <p class="muted">There is no native web UI shipped with SDRconnect headless. Use SPECTRA's Spectrum tab for in-browser waterfall + tuning.</p>
+        <h3>SDRconnect endpoints</h3>
+        <p class="muted">The nRSP-ST hardware (<code id="nrsp-device-ip">10.42.42.42</code>) exposes its own web UI and streaming API. Both are forwarded through the halio so they're reachable over WG:</p>
+        <div class="field-group"><label>SDRconnect Web (browser UI)</label><a id="nrsp-web-link" href="#" target="_blank" class="freq-input">—</a></div>
+        <div class="field-group"><label>HTTPS streaming/control (8081)</label><div class="freq-input" id="nrsp-https-endpoint">—</div></div>
+        <div class="field-group"><label>SDRconnect headless WebSocket (halio)</label><div class="freq-input" id="nrsp-ws-endpoint">ws://10.200.0.11:9100</div></div>
+        <p class="muted">Default admin password = device serial. Use SPECTRA's Spectrum tab for in-browser waterfall + tuning without leaving this UI.</p>
       </div>
+    </div>
+
+    <div class="glass-card" style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;">
+        <h3 style="margin:0;">SDRconnect Web (embedded)</h3>
+        <a id="nrsp-web-open" href="#" target="_blank" class="btn btn--sm">Open in tab ↗</a>
+      </div>
+      <iframe id="nrsp-web-iframe" src="about:blank" style="width:100%;height:720px;border:0;border-top:1px solid rgba(255,255,255,0.08);background:#fff;" title="SDRconnect Web"></iframe>
     </div>
   </section>
 
