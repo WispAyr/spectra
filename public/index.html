@@ -385,10 +385,11 @@
       <div class="glass-card settings-card">
         <h3>SDRconnect endpoints</h3>
         <p class="muted">The nRSP-ST hardware (<code id="nrsp-device-ip">10.42.42.42</code>) exposes its own web UI and streaming API. Both are forwarded through the halio so they're reachable over WG:</p>
-        <div class="field-group"><label>SDRconnect Web (browser UI)</label><a id="nrsp-web-link" href="#" target="_blank" class="freq-input">—</a></div>
+        <div class="field-group"><label>SDRconnect Web (HTTP/1.1, no cert prompt)</label><a id="nrsp-web-link" href="#" target="_blank" class="freq-input">—</a></div>
+        <div class="field-group"><label>SDRconnect Web (HTTPS + HTTP/2, faster — accept self-signed cert once)</label><a id="nrsp-web-link-h2" href="#" target="_blank" class="freq-input">—</a></div>
         <div class="field-group"><label>HTTPS streaming/control (8081)</label><div class="freq-input" id="nrsp-https-endpoint">—</div></div>
         <div class="field-group"><label>SDRconnect headless WebSocket (halio)</label><div class="freq-input" id="nrsp-ws-endpoint">ws://10.200.0.11:9100</div></div>
-        <p class="muted">Default admin password = device serial. Use SPECTRA's Spectrum tab for in-browser waterfall + tuning without leaving this UI.</p>
+        <p class="muted">Default admin password = device serial. The HTTPS link multiplexes all 187 framework files over a single TCP connection and gzip-compresses on the wire — ~20% faster than the HTTP one for cold loads. Use SPECTRA's Spectrum tab for in-browser waterfall + tuning without leaving this UI.</p>
       </div>
     </div>
 

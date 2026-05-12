@@ -315,9 +315,12 @@ const App = (() => {
       const wsEl = document.getElementById('nrsp-ws-endpoint');
       if (wsEl) wsEl.textContent = `ws://${host}:9100`;
       const webUrl = `http://${host}:9001/`;
+      const webUrlH2 = `https://${host}:9002/`;
       const httpsUrl = `https://${host}:8081/`;
       const webLink = document.getElementById('nrsp-web-link');
       if (webLink) { webLink.textContent = webUrl; webLink.href = webUrl; }
+      const webLinkH2 = document.getElementById('nrsp-web-link-h2');
+      if (webLinkH2) { webLinkH2.textContent = webUrlH2; webLinkH2.href = webUrlH2; }
       const webOpen = document.getElementById('nrsp-web-open');
       if (webOpen) webOpen.href = webUrl;
       const httpsEl = document.getElementById('nrsp-https-endpoint');
