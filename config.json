@@ -6,10 +6,16 @@
     "antennaPort": "A",
     "sampleRate": 2048000,
     "gainReduction": 40,
-    "frequency": 100000000,
+    "frequency": 1090000000,
     "bandwidth": 1536000,
     "wsPort": 9100,
-    "iqStream": false
+    "iqStream": true
+  },
+  "iqBridge": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 1234,
+    "fifoPath": "/run/spectra/iq.s16le"
   },
   "server": {
     "port": 3333,
@@ -20,9 +26,8 @@
     "adsb": {
       "enabled": true,
       "frequency": 1090000000,
-      "host": "127.0.0.1",
-      "port": 30005,
-      "jsonPort": 30003
+      "jsonPath": "/run/readsb/aircraft.json",
+      "pollMs": 2000
     },
     "aprs": {
       "enabled": true,
@@ -31,7 +36,7 @@
       "callsign": "M0XXX"
     },
     "iot": {
-      "enabled": true,
+      "enabled": false,
       "frequency": 433920000,
       "protocols": [
         "tpms",
@@ -94,7 +99,7 @@
     "maxSizeMb": 2048,
     "format": "iq"
   },
-  "wispacyr": {
+  "wispayr": {
     "enabled": false,
     "endpoint": "http://localhost:4000/api/signals",
     "apiKey": ""

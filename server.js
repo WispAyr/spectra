@@ -19,6 +19,7 @@ const IotFeed = require('./modules/iot-feed');
 const SpectrumScanner = require('./modules/spectrum-scanner');
 const RecordingManager = require('./modules/recording-manager');
 const SignalLog = require('./modules/signal-log');
+const IqTcpServer = require('./modules/iq-tcp-server');
 
 const app = express();
 const server = http.createServer(app);
@@ -102,6 +103,12 @@ const scanner = config.scanner.enabled ? new SpectrumScanner(config.scanner, sdr
     signalLog.log('scan_anomaly', anomaly);
   }
 }) : null;
+
+// IQ-as-rtl_tcp bridge: lets readsb / rtl_433 / rtl_ais consume the nRSP-ST
+// over the WebSocket SDRconnect feed as if it were a USB RTL-SDR dongle.
+const iqBridge = (config.iqBridge && config.iqBridge.enabled !== false)
+  ? new IqTcpServer(config.iqBridge || {}, sdrManager)
+  : null;
 
 const recorder = new RecordingManager(config.recording, sdrManager, {
   onStart: (rec) => {
@@ -317,6 +324,7 @@ server.listen(PORT, config.server.host, () => {
 
   // Start all feeds
   sdrManager.connect();
+  if (iqBridge) iqBridge.start();
   if (adsbFeed) adsbFeed.start();
   if (aprsFeed) aprsFeed.start();
   if (iotFeed) iotFeed.start();
@@ -329,6 +337,7 @@ process.on('SIGINT', () => {
   if (aprsFeed) aprsFeed.stop();
   if (iotFeed) iotFeed.stop();
   if (scanner) scanner.stop();
+  if (iqBridge) iqBridge.stop();
   recorder.stopAll();
   process.exit(0);
 });

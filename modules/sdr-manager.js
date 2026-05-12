@@ -61,7 +61,9 @@ class SdrManager extends EventEmitter {
       console.warn(`[SDR] WS error: ${err.message}`);
     });
 
-    this.ws.on("close", (code) => {
+    this.ws.on("close", (code, reason) => {
+      const reasonStr = reason ? reason.toString() : '';
+      console.log(`[SDR] WS closed: code=${code} reason=${JSON.stringify(reasonStr)}`);
       const wasConnected = this.connected;
       this.connected = false;
       this._serialSelected = false;
@@ -160,7 +162,12 @@ class SdrManager extends EventEmitter {
       this.bins = out;
       this.lastSpectrumAt = Date.now();
     } else if (type === 0x0002) {
-      this.emit("iq_chunk", { bytes: buf.length - 2 });
+      // IQ chunk: 2-byte type header followed by interleaved s16-LE I/Q samples.
+      // Emit the raw payload buffer so downstream bridges (iq-tcp-server)
+      // can repackage as rtl_tcp or feed an in-process decoder.
+      const payload = buf.subarray(2);
+      this.emit("iq", payload);
+      this.emit("iq_chunk", { bytes: payload.length });
     }
   }
 
