@@ -32,10 +32,14 @@
  *                   shared by every reader of that factor. (10 Oct 2026)
  *                   Refcounted: SPECTRA enables iq_stream only while clients
  *                   (or /ws/audio2) are connected.
- *                   Bounded: a reader more than ~0.25 s of its stream behind
- *                   (min 256 KB) gets frames dropped; one that stays behind for
- *                   IQ_SLOW_READER_MS (15 s) is closed with 1013 so it
- *                   reconnects fresh instead of living seconds in the past.
+ *                   Opt-in readers (decim>1 or ?fresh=1): bounded to ~0.25 s
+ *                   of their stream (min 256 KB) — frames dropped beyond that,
+ *                   and a reader behind for IQ_SLOW_READER_MS (15 s) is closed
+ *                   with 1013 to reconnect fresh; hello re-sent whenever the
+ *                   centre/rate changed. A plain /ws/iq reader (uhf-iq.py, the
+ *                   tower relay — review-only per Ewan 10 Oct 2026) keeps the
+ *                   exact old semantics: drop above 2 MB buffered, never
+ *                   closed, hellos only on 'retune'.
  *
  * Diagnostics (plain HTTP on the same port):
  *   GET /stats          — relay counters + measured byte rate
@@ -106,9 +110,10 @@ class AudioWsBridge {
         });
       } else if (path === '/ws/iq') {
         const decim = parseDecim(req.url);
+        const fresh = decim > 1 || /[?&]fresh=1(&|$)/.test(req.url || '');
         if (decim === null) { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); socket.destroy(); return; }
         this.wssIq.handleUpgrade(req, socket, head, ws => {
-          ws.iqDecim = decim; ws.iqDrops = 0; ws.iqBehindSince = 0; ws.iqSent = 0;
+          ws.iqDecim = decim; ws.iqFresh = fresh; ws.iqDrops = 0; ws.iqBehindSince = 0; ws.iqSent = 0;
           if (decim > 1 && !this._iqDecims.has(decim)) this._iqDecims.set(decim, new IqDecimator(decim));
           ws.iqHelloKey = this._iqKey();
           try { ws.send(JSON.stringify(this._iqHello(decim))); } catch {}
@@ -247,7 +252,7 @@ class AudioWsBridge {
     if (!this.wssIq) return;
     const key = this._iqKey();
     this.wssIq.clients.forEach(c => {
-      if (stale && c.iqHelloKey === key) return;
+      if (stale && (!c.iqFresh || c.iqHelloKey === key)) return;
       c.iqHelloKey = key;
       if (c.readyState === WebSocket.OPEN) { try { c.send(JSON.stringify(this._iqHello(c.iqDecim || 1))); } catch {} }
     });
@@ -280,6 +285,10 @@ class AudioWsBridge {
   /** Send one IQ frame to one reader, bounded. Returns false if dropped. */
   _sendIqBounded(c, buf, now) {
     if (c.readyState !== WebSocket.OPEN) return false;
+    if (!c.iqFresh) { // legacy reader: exactly the pre-10-Oct rule
+      if (c.bufferedAmount >= 1 << 21) { c.iqDrops++; this._iqDrops++; return false; }
+      c.iqSent += buf.length; try { c.send(buf); } catch {} return true;
+    }
     const fs = ((this.sdr && this.sdr.config && this.sdr.config.sampleRate) || 2000000) / (c.iqDecim || 1);
     const limit = Math.max(IQ_MIN_BUFFER, fs * 4 * IQ_BUFFER_SECONDS);
     if (c.bufferedAmount > limit) {

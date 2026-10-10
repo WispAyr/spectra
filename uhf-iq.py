@@ -18,32 +18,20 @@ import threading
 import time
 import urllib.request
 
-import os
-
 import numpy as np
-from scipy.signal import lfilter, sosfilt
 from websocket import WebSocketApp
 from websockets.sync.server import serve as ws_serve
 
-# 10 Oct 2026: take the bridge's ÷2 halfband tap (1 Msps, ±500 kHz). The tower channels sit
-# within +125 kHz of the 455.625 centre; at 2 Msps this reader fell 15 MB behind (the Python
-# DDC could not keep up) and moved 64 Mbps over loopback. UHF_IQ_DECIM=1 restores full rate.
-IQ_DECIM = int(os.environ.get("UHF_IQ_DECIM", "2"))
-IQ_WS = "ws://127.0.0.1:3334/ws/iq" + (f"?decim={IQ_DECIM}" if IQ_DECIM > 1 else "")
+IQ_WS = "ws://127.0.0.1:3334/ws/iq"
 HW_WS = "ws://127.0.0.1:3334/ws/audio"
 RADIO = "http://127.0.0.1:3943/api/radio"
 CONFIG = "http://127.0.0.1:3943/api/nrsp/config"
 FFT = "http://127.0.0.1:3943/api/spectrum/fft"
 SUBMIT = "http://10.200.0.29:4979/api/tx/submit"
 WATCH_HZ = 455625000          # park on ground; hardware demod is this channel
-FS = 2_000_000 // max(1, IQ_DECIM)      # until the hello says otherwise
-AUDIO_FS = 8000                         # boxcar FS → 8 kHz (R = FS // AUDIO_FS)
-R = FS // AUDIO_FS
-# A channel further than this fraction of FS from the centre is outside the IQ span (or in the
-# filter skirt) and is skipped. 456.7 MHz is 1.075 MHz off a 455.625 centre: even at 2 Msps
-# (±1 MHz) it was aliased — its DDC was really listening to ~454.7 MHz.
-SPAN_FRAC = 0.45
-LO_MAX_PERIOD = 1 << 16
+FS = 2_000_000
+R = 250                                 # 2e6 / 250 = 8 kHz
+AUDIO_FS = FS // R
 FRAME = 160                             # 20 ms at 8 kHz
 # Gate on FFT bin power (carrier), NOT audio RMS. Unsquelched NFM noise is
 # loud (~-14 dBFS) and would key hiss. Idle bins sit ~-103, live ground was
@@ -96,16 +84,18 @@ class BiquadCascade:
         self.z = [[0.0, 0.0], [0.0, 0.0]]
 
     def run(self, xs: np.ndarray) -> np.ndarray:
-        # Same transposed direct-form II as the per-sample loop it replaced (sosfilt's zi is
-        # exactly [z1, z2] per section), ~50× cheaper at 24 kHz. test_uhf_iq.py checks equality.
         out = np.asarray(xs, dtype=np.float64)
-        if out.size == 0:
-            return out
-        sos = np.array([[b0, b1, b2, 1.0, a1, a2] for (b0, b1, b2, a1, a2) in self.s])
-        zi = np.array(self.z, dtype=np.float64)
-        y, zf = sosfilt(sos, out, zi=zi)
-        self.z = [list(map(float, row)) for row in zf]
-        return y
+        for i, (b0, b1, b2, a1, a2) in enumerate(self.s):
+            z1, z2 = self.z[i]
+            y = np.empty_like(out)
+            for n, x in enumerate(out):
+                yn = b0 * x + z1
+                z1 = b1 * x - a1 * yn + z2
+                z2 = b2 * x - a2 * yn
+                y[n] = yn
+            self.z[i] = [z1, z2]
+            out = y
+        return out
 # Live mix headline: ground is the busy ops channel, so it stays the
 # labelled frequency whenever it is open. Fire still outranks ground on
 # Broadnet (txsched prio 20 vs 30) so a fire call is not stuck behind a
@@ -273,46 +263,11 @@ def fft_loop(chans, stop):
         stop.wait(0.15)
 
 
-def lo_table(offset_hz: int, fs: int):
-    """Exact periodic local oscillator exp(-j·2π·off·n/fs) when it repeats within
-    LO_MAX_PERIOD samples (off/fs rational with a small denominator — every channel here is a
-    multiple of 25 kHz), else None and the caller falls back to np.exp per chunk."""
-    off, fs = int(offset_hz), int(fs)
-    if fs <= 0:
-        return None
-    period = fs // math.gcd(abs(off), fs) if off else 1
-    if period > LO_MAX_PERIOD:
-        return None
-    n = np.arange(period, dtype=np.float64)
-    return np.exp(-2j * np.pi * off * n / fs).astype(np.complex64)
-
-
-def discriminator_iir(st, ang: np.ndarray) -> np.ndarray:
-    """dc strip + de-emphasis + LPF on the FM discriminator output, state on `st`
-    (.dc .deemph .lpf = last outputs). Identical to the original per-sample loop:
-        dc = 0.9995·dc + 0.0005·a;  x = a − dc;  de += 0.45·(x − de);  lp += 0.6·(de − lp)
-    as three first-order lfilters (zi = −a1·y[n−1])."""
-    if ang.size == 0:
-        return ang.astype(np.float64)
-    dc, zf = lfilter([0.0005], [1.0, -0.9995], ang, zi=[0.9995 * st.dc])
-    x = ang - dc
-    de, zf2 = lfilter([0.45], [1.0, -0.55], x, zi=[0.55 * st.deemph])
-    lp, zf3 = lfilter([0.6], [1.0, -0.4], de, zi=[0.4 * st.lpf])
-    st.dc, st.deemph, st.lpf = float(dc[-1]), float(de[-1]), float(lp[-1])
-    return lp
-
-
 class Chan:
-    def __init__(self, spec, center, fs: int = FS):
+    def __init__(self, spec, center):
         self.spec = spec
-        self.center = int(center)
-        self.fs = int(fs)
-        self.r = max(1, self.fs // AUDIO_FS)
-        self.w = 2 * np.pi * (spec["hz"] - center) / self.fs
-        self.lo = None
-        self.lo_i = 0
-        self.in_span = True
-        self._retable()
+        w = 2 * np.pi * (spec["hz"] - center) / FS
+        self.w = w
         self.phi = 0.0
         self.prev = 0 + 0j
         self.dc = 0.0
@@ -340,47 +295,15 @@ class Chan:
         self.mag_hot = False
         self.radio_hot = False
 
-    def _retable(self):
-        off = int(self.spec["hz"]) - self.center
-        was = self.in_span
-        self.in_span = abs(off) <= SPAN_FRAC * self.fs
-        if not self.in_span and was and self.spec.get("kind") != "tower":  # ground rides the hardware NFM path
-            print(f"[uhf-iq] {self.spec['label']} is {off/1e3:+.0f} kHz off centre, outside ±{SPAN_FRAC*self.fs/1e3:.0f} kHz of the "
-                  f"{self.fs/1e6:g} Msps tap — skipped", flush=True)
-        self.w = 2 * np.pi * off / self.fs
-        self.lo = lo_table(off, self.fs)
-        self.lo_i = 0
-        self.phi = 0.0
-        self._rem = np.zeros(0, dtype=np.complex64)
-
     def set_center(self, center):
-        self.center = int(center)
-        self._retable()
-
-    def set_rate(self, fs: int):
-        fs = int(fs)
-        if fs == self.fs:
-            return
-        self.fs = fs
-        self.r = max(1, fs // AUDIO_FS)
-        self._retable()
-
-    def _mix(self, iq: np.ndarray) -> np.ndarray:
-        n = iq.shape[0]
-        if self.lo is not None:
-            idx = (self.lo_i + np.arange(n)) % self.lo.size
-            self.lo_i = (self.lo_i + n) % self.lo.size
-            return iq * self.lo[idx]
-        ph = self.phi + self.w * np.arange(n, dtype=np.float64)
-        self.phi = (self.phi + self.w * n) % (2 * np.pi)
-        return iq * np.exp(-1j * ph).astype(np.complex64)
+        self.w = 2 * np.pi * (self.spec["hz"] - center) / FS
 
     def process(self, iq: np.ndarray):
         self.tick_frames = []
-        if not self.in_span:
-            return
-        R = self.r
-        mix = self._mix(iq)
+        n = iq.shape[0]
+        ph = self.phi + self.w * np.arange(n, dtype=np.float64)
+        self.phi = (self.phi + self.w * n) % (2 * np.pi)
+        mix = iq * np.exp(-1j * ph).astype(np.complex64)
         if self._rem.size:
             mix = np.concatenate([self._rem, mix])
         usable = (mix.size // R) * R
@@ -395,7 +318,16 @@ class Chan:
         z[1:] = dec[1:] * np.conj(dec[:-1])
         self.prev = dec[-1]
         ang = np.angle(z).astype(np.float64)
-        out = discriminator_iir(self, ang)
+        # cheap IIR: dc strip + de-emphasis + LPF
+        out = np.empty(ang.size, dtype=np.float64)
+        dc, de, lp = self.dc, self.deemph, self.lpf
+        for i, a in enumerate(ang):
+            dc = 0.9995 * dc + 0.0005 * a
+            x = a - dc
+            de = de + 0.45 * (x - de)
+            lp = lp + 0.6 * (de - lp)
+            out[i] = lp
+        self.dc, self.deemph, self.lpf = dc, de, lp
         smp = np.clip(out * AUDIO_SCALE, -32767, 32767).astype(np.int16)
         mag = float(np.sqrt(np.mean(np.abs(dec) ** 2) + 1e-12))
         self.mag = mag
@@ -408,7 +340,7 @@ class Chan:
         self.mag_hot = mag >= max((self.mag_floor or 0) * 2.2, 40.0)
         self._gate(smp)
 
-    def _gate(self, smp: np.ndarray):  # noqa: C901 (unchanged)
+    def _gate(self, smp: np.ndarray):
         now = time.time()
         nfr = smp.size // FRAME
         if nfr == 0:
@@ -626,8 +558,7 @@ def submit_over(spec, pcm, pcm24=None):
 class App:
     def __init__(self):
         self.center = WATCH_HZ
-        self.sr = FS
-        self.chans = [Chan(s, self.center, FS) for s in CHANNELS]
+        self.chans = [Chan(s, self.center) for s in CHANNELS]
         self._hello = None
         self._last_park = 0.0
         self._iq_bytes = 0
@@ -644,23 +575,19 @@ class App:
                 return
             sr = int(self._hello.get("sampleRate") or FS)
             ctr = int(self._hello.get("centerHz") or WATCH_HZ)
-            print(f"[uhf-iq] hello sr={sr} center={ctr} decim={self._hello.get('decim', 1)}", flush=True)
-            if sr % AUDIO_FS:
-                print(f"[uhf-iq] sample rate {sr} is not a multiple of {AUDIO_FS} — IQ channels idle until it is", flush=True)
-            self.sr = sr
-            for c in self.chans:
-                c.set_rate(sr)
+            print(f"[uhf-iq] hello sr={sr} center={ctr}", flush=True)
             if ctr:
-                self.set_center(ctr, "hello")
+                self.center = ctr
+                for c in self.chans:
+                    c.set_center(ctr)
             return
         if not isinstance(msg, (bytes, bytearray)):
             return
         buf = np.frombuffer(msg, dtype="<i2")
         if buf.size < 4 or (buf.size & 1):
             return
-        if self.sr % AUDIO_FS:
-            return
-        cpx = buf.astype(np.float32).view(np.complex64)
+        f = buf.astype(np.float32)
+        cpx = f[0::2] + 1j * f[1::2]
         self._iq_bytes += len(msg)
         for c in self.chans:
             if c.spec.get("kind") == "tower":
@@ -672,32 +599,12 @@ class App:
         if now - self._t0 >= 10:
             rate = self._iq_bytes / (now - self._t0) / 1e6
             mags = " ".join(f"{c.spec['label'].split()[-1]}={c.mag:.0f}/{c.mag_floor or 0:.0f}" for c in self.chans)
-            print(f"[uhf-iq] iq {rate:.2f} MB/s sr={self.sr} center={self.center} mag {mags}", flush=True)
+            print(f"[uhf-iq] iq {rate:.1f} MB/s center={self.center} mag {mags}", flush=True)
             self._iq_bytes = 0
             self._t0 = now
         if now - self._last_park >= 20:
             self._last_park = now
-            threading.Thread(target=self.park_and_refresh, daemon=True).start()
-
-    def set_center(self, ctr: int, why: str):
-        ctr = int(ctr)
-        if ctr == self.center:
-            return
-        print(f"[uhf-iq] centre {self.center} -> {ctr} ({why})", flush=True)
-        self.center = ctr
-        for c in self.chans:
-            c.set_center(ctr)
-
-    def park_and_refresh(self):
-        """Park on ground, then trust the device config for the centre. The bridge's hello could go
-        stale (10 Oct 2026: 30 h DDC-ing fire/PIK OPS at a "100 MHz" centre, overs sent as noise)."""
-        park()
-        try:
-            f = int(get(CONFIG).get("frequency") or 0)
-            if f:
-                self.set_center(f, "nrsp/config")
-        except Exception as e:
-            print(f"[uhf-iq] config refresh: {e}", flush=True)
+            threading.Thread(target=park, daemon=True).start()
 
     def on_error(self, ws, err):
         print(f"[uhf-iq] ws error {err}", flush=True)
