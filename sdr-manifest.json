@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "site": "van-halio",
+  "_comment": "Source of truth for radios. To activate a future radio, move it from futureRadios into radios. The enumerator (scripts/sdr-enumerate.js) merges this with live probes into /run/sdr/devices.json.",
+  "radios": [
+    {
+      "id": "nrsp-primary",
+      "label": "nRSP-ST (van primary)",
+      "kind": "nRSP-ST",
+      "transport": "network",
+      "addr": "10.42.42.42",
+      "gateway": { "kind": "sdrconnect", "wsPort": 9100 },
+      "usbId": null,
+      "soapyMatch": null,
+      "capabilities": ["iq", "airband", "pager", "adsb", "wide-spectrum"],
+      "healthEndpoint": "http://127.0.0.1:3333/api/health",
+      "recover": { "unit": "sdrconnect-headless", "watchdog": "nrsp-watchdog" },
+      "expected": true,
+      "primary": true
+    }
+  ],
+  "futureRadios": [
+    { "id": "rtl-airband", "label": "RTL-SDR (airband/pager)", "kind": "RTL", "transport": "usb", "usbId": "0bda:2838", "soapyMatch": "rtlsdr", "capabilities": ["airband","pager","adsb"], "recover": { "unit": "rtl_airband" }, "expected": false, "primary": false },
+    { "id": "airspy-mini", "label": "Airspy Mini", "kind": "Airspy", "transport": "usb", "usbId": "1d50:60a1", "soapyMatch": "airspy", "capabilities": ["iq","wide-spectrum","adsb"], "expected": false, "primary": false },
+    { "id": "antsdr-e200", "label": "ANTSDR E200 (DJI OcuSync)", "kind": "ANTSDR", "transport": "network", "addr": "192.168.1.10", "soapyMatch": "plutosdr", "capabilities": ["iq","wide-spectrum","drone-rf"], "expected": false, "primary": false }
+  ]
+}

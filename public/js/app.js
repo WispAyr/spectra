@@ -126,8 +126,49 @@ const App = (() => {
     if (page === 'aprs' && window.AprsMap) AprsMap.init();
     if (page === 'waterfall' && window.Waterfall) Waterfall.init();
     if (page === 'scanner' && window.Scanner) Scanner.init();
+    if (page === 'scanner') startSignalsPolling(); else stopSignalsPolling();
     if (page === 'settings') renderSettings();
     if (page === 'nrsp') startNrspPolling();
+  }
+
+  // ── Live Signals (active-frequency detector) ──────────────────
+  let signalsPollTimer = null;
+  function startSignalsPolling() {
+    stopSignalsPolling();
+    renderSignals();
+    signalsPollTimer = setInterval(renderSignals, 3000);
+  }
+  function stopSignalsPolling() {
+    if (signalsPollTimer) { clearInterval(signalsPollTimer); signalsPollTimer = null; }
+  }
+  function sigAgo(ms) { const s = Math.round((Date.now() - ms) / 1000); return s < 2 ? 'now' : s < 60 ? s + 's' : Math.round(s / 60) + 'm'; }
+  function renderSignals() {
+    const el = document.getElementById('signal-list');
+    if (!el) return;
+    fetch('/api/signals/active').then(r => r.json()).then(d => {
+      const sigs = (d && d.signals) || [];
+      const cnt = document.getElementById('signal-count');
+      const tuned = d && d.tunedHz ? (d.tunedHz / 1e6).toFixed(3) + ' MHz' : '—';
+      if (cnt) cnt.textContent = `${sigs.length ? sigs.length + ' active' : 'none'} · tuned ${tuned}`;
+      if (!sigs.length) { el.innerHTML = '<div style="opacity:.5;padding:.6rem">No active signals in the tuned window.</div>'; return; }
+      el.innerHTML = sigs.map(s => {
+        const mode = s.mode || 'NFM';
+        const bw = s.band === 'ADS-B' ? 1536000 : (mode === 'WFM' ? 256000 : 12500);
+        return `<div class="anomaly-item signal-row" data-f="${s.freq}" data-bw="${bw}" title="Click to tune the nRSP-ST here"
+          style="cursor:pointer;display:flex;gap:.8rem;align-items:center;justify-content:space-between">
+          <span style="color:#4fd1ff;font-weight:600;min-width:6.2rem">${s.freqMHz.toFixed(4)} MHz</span>
+          <span style="color:#7ee787;min-width:3rem;text-align:right">${Math.round(s.snr)} dB</span>
+          <span style="flex:1;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.band || mode}</span>
+          <span style="opacity:.45">${sigAgo(s.lastSeen)}</span>
+        </div>`;
+      }).join('');
+      el.querySelectorAll('.signal-row').forEach(row => {
+        row.addEventListener('click', () => {
+          send('tune', { frequency: +row.dataset.f, bandwidth: +row.dataset.bw });
+          if (cnt) cnt.textContent = 'tuning ' + (+row.dataset.f / 1e6).toFixed(4) + ' MHz…';
+        });
+      });
+    }).catch(() => {});
   }
 
   // ── UI Updates ───────────────────────────────────────────────

@@ -1,16 +1,29 @@
 {
   "nrsp": {
     "host": "127.0.0.1",
-    "webPort": 8080,
+    "webPort": 9001,
     "rspTcpPort": 1234,
-    "antennaPort": "A",
-    "sampleRate": 2048000,
+    "antennaPort": "Antenna B",
+    "sampleRate": 2000000,
     "gainReduction": 40,
-    "frequency": 1090000000,
-    "bandwidth": 1536000,
+    "frequency": 455625000,
+    "bandwidth": 12500,
     "wsPort": 9100,
-    "iqStream": true
+    "iqStream": false,
+    "deviceVariant": "Full IQ",
+    "squelch": {
+      "level": -96
+    },
+    "demodMode": "NFM",
+    "agcEnable": false,
+    "audioLimiters": false,
+    "audioVolumePercent": 20
   },
+  "channel2Presets": [
+    455.7,
+    455.65,
+    456
+  ],
   "iqBridge": {
     "enabled": true,
     "host": "127.0.0.1",
@@ -18,19 +31,19 @@
     "fifoPath": "/run/spectra/iq.s16le"
   },
   "server": {
-    "port": 3333,
+    "port": 3943,
     "uiPort": 3001,
     "host": "0.0.0.0"
   },
   "decoders": {
     "adsb": {
-      "enabled": true,
+      "enabled": false,
       "frequency": 1090000000,
       "jsonPath": "/run/readsb/aircraft.json",
       "pollMs": 2000
     },
     "aprs": {
-      "enabled": true,
+      "enabled": false,
       "frequency": 144800000,
       "agwpePort": 8000,
       "callsign": "M0XXX"
@@ -106,5 +119,561 @@
   },
   "database": {
     "path": "./db/spectra.db"
+  },
+  "presets": [
+    {
+      "id": "p156800000-1720198527",
+      "name": "Marine Ch16",
+      "location": "Common VHF",
+      "frequency": 156800000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p145500000-1775110982",
+      "name": "2m Calling",
+      "location": "Common VHF",
+      "frequency": 145500000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p433500000-826083342",
+      "name": "70cm Calling",
+      "location": "Common VHF",
+      "frequency": 433500000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p144800000-343204306",
+      "name": "APRS 144.8",
+      "location": "Common VHF",
+      "frequency": 144800000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p243000000-938991588",
+      "name": "UHF GUARD 243.000",
+      "location": "EGPK UHF",
+      "frequency": 243000000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p249550000-1585286444",
+      "name": "PIK MIL 249.550",
+      "location": "EGPK UHF",
+      "frequency": 249550000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p257800000-2043476226",
+      "name": "NATO TWR 257.800",
+      "location": "EGPK UHF",
+      "frequency": 257800000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p259600000-1553837698",
+      "name": "MIL AREA 259.600",
+      "location": "EGPK UHF",
+      "frequency": 259600000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p282800000-1710661860",
+      "name": "SAR COMMON 282.800",
+      "location": "EGPK UHF",
+      "frequency": 282800000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p362300000-862107030",
+      "name": "NATO APP 362.300",
+      "location": "EGPK UHF",
+      "frequency": 362300000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453050000-1239538724",
+      "name": "PIK OPS 453.05",
+      "location": "EGPK UHF Ops",
+      "frequency": 453050000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453062500-1490775336",
+      "name": "PIK OPS 453.0625",
+      "location": "EGPK UHF Ops",
+      "frequency": 455625000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453750000-1239538941",
+      "name": "PIK OPS 453.75",
+      "location": "EGPK UHF Ops",
+      "frequency": 453750000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453925000-228996611",
+      "name": "PIK OPS 453.925",
+      "location": "EGPK UHF Ops",
+      "frequency": 453925000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p455625000-227152452",
+      "name": "PIK OPS 455.625",
+      "location": "EGPK UHF Ops",
+      "frequency": 455625000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p455700000-1484033606",
+      "name": "PIK OPS 455.7",
+      "location": "EGPK UHF Ops",
+      "frequency": 455700000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p455750000-1239598523",
+      "name": "PIK OPS 455.75",
+      "location": "EGPK UHF Ops",
+      "frequency": 455750000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p456700000-1484032645",
+      "name": "PIK OPS 456.7",
+      "location": "EGPK UHF Ops",
+      "frequency": 456700000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459550000-1239717625",
+      "name": "PIK OPS 459.55",
+      "location": "EGPK UHF Ops",
+      "frequency": 459550000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459562500-1662699197",
+      "name": "PIK OPS 459.5625",
+      "location": "EGPK UHF Ops",
+      "frequency": 459562500,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p460250000-1240372934",
+      "name": "PIK OPS 460.25",
+      "location": "EGPK UHF Ops",
+      "frequency": 460250000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p460425000-203142828",
+      "name": "PIK OPS 460.425",
+      "location": "EGPK UHF Ops",
+      "frequency": 460425000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p460925000-203138023",
+      "name": "PIK OPS 460.925",
+      "location": "EGPK UHF Ops",
+      "frequency": 460925000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p461000000-1297632180",
+      "name": "PIK OPS 461",
+      "location": "EGPK UHF Ops",
+      "frequency": 461000000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p461050000-1240402663",
+      "name": "PIK OPS 461.05",
+      "location": "EGPK UHF Ops",
+      "frequency": 461050000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p462200000-1484006703",
+      "name": "PIK OPS 462.2",
+      "location": "EGPK UHF Ops",
+      "frequency": 462200000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p120550000-1197587126",
+      "name": "EGPK APP 120.550",
+      "location": "Local AVTN",
+      "frequency": 120550000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p121125000-1128337169",
+      "name": "EGPK ATIS 121.125",
+      "location": "Local AVTN",
+      "frequency": 121125000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p129450000-422321821",
+      "name": "EGPK RADAR 129.450",
+      "location": "Local AVTN",
+      "frequency": 129450000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p118150000-698468681",
+      "name": "EGPK TWR 118.150",
+      "location": "Local AVTN",
+      "frequency": 118150000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p120310000-1617273574",
+      "name": "GB-0180 SAFETYCOM 120.310",
+      "location": "Local AVTN",
+      "frequency": 120310000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p135475000-1683360182",
+      "name": "GB-0357 SAFETYCOM 135.475",
+      "location": "Local AVTN",
+      "frequency": 135475000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p120350000-1348587249",
+      "name": "EGPF ACC 120.350",
+      "location": "Local AVTN",
+      "frequency": 120350000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p119105000-1650686591",
+      "name": "EGPF APP 119.105",
+      "location": "Local AVTN",
+      "frequency": 119105000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p129580000-1406848149",
+      "name": "EGPF ATIS 129.580",
+      "location": "Local AVTN",
+      "frequency": 129580000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p121705000-1081397978",
+      "name": "EGPF GND 121.705",
+      "location": "Local AVTN",
+      "frequency": 121705000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p118805000-2129477003",
+      "name": "EGPF TWR 118.805",
+      "location": "Local AVTN",
+      "frequency": 118805000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p135475000-6972972",
+      "name": "GB-0201 SAFETYCOM 135.475",
+      "location": "Local AVTN",
+      "frequency": 135475000,
+      "demodMode": "AM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p456350000-520354030",
+      "name": "GDS Radios 456.3500",
+      "location": "Local OPS UHF",
+      "frequency": 456350000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p461850000-224152851",
+      "name": "GDS Radios 461.8500",
+      "location": "Local OPS UHF",
+      "frequency": 461850000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p456675000-1640317784",
+      "name": "Bourne Leisure 456.6750",
+      "location": "Local OPS UHF",
+      "frequency": 456675000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p462175000-867479662",
+      "name": "Bourne Leisure 462.1750",
+      "location": "Local OPS UHF",
+      "frequency": 462175000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453162500-2043481375",
+      "name": "Associated British Por 453.1625",
+      "location": "Local OPS UHF",
+      "frequency": 453162500,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453425000-2043395758",
+      "name": "Associated British Por 453.4250",
+      "location": "Local OPS UHF",
+      "frequency": 453425000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459662500-1871557514",
+      "name": "Associated British Por 459.6625",
+      "location": "Local OPS UHF",
+      "frequency": 459662500,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453475000-2002678430",
+      "name": "Henry Boot Development 453.4750",
+      "location": "Local OPS UHF",
+      "frequency": 453475000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459975000-2120365005",
+      "name": "Henry Boot Development 459.9750",
+      "location": "Local OPS UHF",
+      "frequency": 459975000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453650000-251438679",
+      "name": "Abellio Scotrail 453.6500",
+      "location": "Local OPS UHF",
+      "frequency": 453650000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453100000-251284919",
+      "name": "Abellio Scotrail 453.1000",
+      "location": "Local OPS UHF",
+      "frequency": 453100000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459600000-423208780",
+      "name": "Abellio Scotrail 459.6000",
+      "location": "Local OPS UHF",
+      "frequency": 459600000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453112500-1272972780",
+      "name": "Ayrshire College 453.1125",
+      "location": "Local OPS UHF",
+      "frequency": 453112500,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453600000-1272824853",
+      "name": "Ayrshire College 453.6000",
+      "location": "Local OPS UHF",
+      "frequency": 453600000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459612500-1101048919",
+      "name": "Ayrshire College 459.6125",
+      "location": "Local OPS UHF",
+      "frequency": 459612500,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p460100000-471357580",
+      "name": "Ayrshire College 460.1000",
+      "location": "Local OPS UHF",
+      "frequency": 460100000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p462400000-1493887504",
+      "name": "Ayr College 462.4000",
+      "location": "Local OPS UHF",
+      "frequency": 462400000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p455475000-409285317",
+      "name": "Ayrshire And Arran Hea 455.4750",
+      "location": "Local OPS UHF",
+      "frequency": 455475000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p460775000-335161982",
+      "name": "Ayrshire And Arran Hea 460.7750",
+      "location": "Local OPS UHF",
+      "frequency": 460775000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453075000-400513502",
+      "name": "NHS Ayrshire and Arran 453.0750",
+      "location": "Local OPS UHF",
+      "frequency": 453075000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459575000-572437363",
+      "name": "NHS Ayrshire and Arran 459.5750",
+      "location": "Local OPS UHF",
+      "frequency": 459575000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p456600000-1808726493",
+      "name": "NATS (En Route) 456.6000",
+      "location": "Local OPS UHF",
+      "frequency": 456600000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p456850000-1808790880",
+      "name": "NATS (En Route) 456.8500",
+      "location": "Local OPS UHF",
+      "frequency": 456850000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p462100000-1713402681",
+      "name": "NATS (En Route) 462.1000",
+      "location": "Local OPS UHF",
+      "frequency": 462100000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p462350000-1713338294",
+      "name": "NATS (En Route) 462.3500",
+      "location": "Local OPS UHF",
+      "frequency": 462350000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453175000-1543160296",
+      "name": "Hall's Of Scotland 453.1750",
+      "location": "Local OPS UHF",
+      "frequency": 453175000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459675000-1715084157",
+      "name": "Hall's Of Scotland 459.6750",
+      "location": "Local OPS UHF",
+      "frequency": 459675000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p453087500-1543131533",
+      "name": "Hall's Of Scotland 453.0875",
+      "location": "Local OPS UHF",
+      "frequency": 453087500,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p459587500-1715055394",
+      "name": "Hall's Of Scotland 459.5875",
+      "location": "Local OPS UHF",
+      "frequency": 459587500,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    },
+    {
+      "id": "p455850000-1668889430",
+      "name": "Bourne Leisure 455.8500",
+      "location": "Local OPS UHF",
+      "frequency": 455850000,
+      "demodMode": "NFM",
+      "bandwidth": 12500
+    }
+  ],
+  "channel2": {
+    "frequency": 455700000,
+    "enabled": true,
+    "gain": 1,
+    "squelchEnabled": true,
+    "squelchLevel": 0.004
+  },
+  "audioBridge": {
+    "sampleRate": 24000
   }
 }

@@ -97,6 +97,13 @@ class SpectrumScanner {
 
     const lines = [];
 
+    // Watchdog: kill a hung soapy_power so it can't leak / hold the RTL
+    // dongle and starve the next sweep. (2026-08-05 liveness audit)
+    const _wd = setTimeout(() => {
+      console.warn(`[Scanner] ${band.name}: soapy_power watchdog (>30s) — killing hung sweep`);
+      try { proc.kill("SIGKILL"); } catch (e) {}
+    }, 30000);
+
     proc.stdout.on("data", data => {
       data.toString().split("\n").forEach(l => {
         if (l.trim()) lines.push(l.trim());
@@ -104,6 +111,7 @@ class SpectrumScanner {
     });
 
     proc.on("close", () => {
+      clearTimeout(_wd);
       if (lines.length === 0) {
         console.warn(`[Scanner] ${band.name}: no soapy_power output — skipping (no mock fallback)`);
         return;
@@ -116,6 +124,7 @@ class SpectrumScanner {
     });
 
     proc.on("error", (err) => {
+      clearTimeout(_wd);
       console.warn(`[Scanner] soapy_power error for ${band.name}: ${err.message}`);
     });
   }

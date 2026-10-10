@@ -281,11 +281,18 @@
         <button class="btn btn--primary" id="scan-trigger-btn">▶ Sweep Now</button>
       </div>
     </div>
+    <div class="scan-anomalies" style="margin-bottom:1rem">
+      <div class="panel__header">
+        <span class="panel__title">📡 Live Signals — active frequencies (click to tune)</span>
+        <span class="panel__title" id="signal-count" style="opacity:.55;font-size:.8em;font-weight:400"></span>
+      </div>
+      <div class="anomaly-list" id="signal-list"><div style="opacity:.5;padding:.6rem">Detecting active frequencies in the tuned window…</div></div>
+    </div>
     <div class="scan-chart-wrap">
       <canvas id="scan-chart" class="scan-chart"></canvas>
     </div>
     <div class="scan-anomalies">
-      <div class="panel__header"><span class="panel__title">⚠ Anomalies Detected</span></div>
+      <div class="panel__header"><span class="panel__title">⚠ Anomalies Detected (wideband sweep — needs 2nd RTL-SDR)</span></div>
       <div class="anomaly-list" id="anomaly-list"></div>
     </div>
     <div class="scan-history">
