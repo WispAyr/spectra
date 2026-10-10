@@ -24,10 +24,18 @@
  *
  *   /ws/iq        — raw Full-IQ tap for nRSP-session modes (e.g. DAB).
  *                   Protocol: JSON hello {sampleRate,centerHz,format:"sc16",
- *                   interleaved:true} on connect / rate-change, then binary
- *                   interleaved s16-LE I/Q (same buffer sdr-manager emits).
+ *                   interleaved:true,decim} on connect, retune or rate change,
+ *                   then binary interleaved s16-LE I/Q.
+ *                   `/ws/iq?decim=2|4|8` = the same tap decimated in-process
+ *                   (halfband cascade, modules/iq-decimator.js), sampleRate in
+ *                   the hello is already divided. One decimator per factor is
+ *                   shared by every reader of that factor. (10 Oct 2026)
  *                   Refcounted: SPECTRA enables iq_stream only while clients
  *                   (or /ws/audio2) are connected.
+ *                   Bounded: a reader more than ~0.25 s of its stream behind
+ *                   (min 256 KB) gets frames dropped; one that stays behind for
+ *                   IQ_SLOW_READER_MS (15 s) is closed with 1013 so it
+ *                   reconnects fresh instead of living seconds in the past.
  *
  * Diagnostics (plain HTTP on the same port):
  *   GET /stats          — relay counters + measured byte rate
@@ -35,9 +43,13 @@
  */
 const http = require('http');
 const WebSocket = require('ws');
+const { IqDecimator, FACTORS } = require('./iq-decimator');
 
 const KNOWN_RATES = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
 const SPECTRUM_PUSH_MS = 150;
+const IQ_MIN_BUFFER = 256 * 1024;       // never drop below this much queued
+const IQ_BUFFER_SECONDS = 0.25;         // else allow ~0.25 s of the reader's own stream
+const IQ_SLOW_READER_MS = 15000;        // continuously behind this long → close 1013
 
 class AudioWsBridge {
   constructor(sdrManager, opts = {}) {
@@ -65,6 +77,9 @@ class AudioWsBridge {
     this.wssIq = new WebSocket.Server({ noServer: true });
     this._a48frames = 0; this._a48bytes = 0; this._a48lastAt = 0;
     this._iqFrames = 0; this._iqBytes = 0; this._iqLastAt = 0;
+    this._iqDecims = new Map();           // factor → IqDecimator, while it has readers
+    this._iqDrops = 0; this._iqSlowClosed = 0;
+    this.iqSlowReaderMs = opts.iqSlowReaderMs || IQ_SLOW_READER_MS;
     this.onIqClients = null;   // SPECTRA re-eval iq_stream_enable
 
     this.server.on('upgrade', (req, socket, head) => {
@@ -90,10 +105,15 @@ class AudioWsBridge {
           ws.on('close', () => this._notifyA2Clients());
         });
       } else if (path === '/ws/iq') {
+        const decim = parseDecim(req.url);
+        if (decim === null) { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); socket.destroy(); return; }
         this.wssIq.handleUpgrade(req, socket, head, ws => {
-          try { ws.send(JSON.stringify(this._iqHello())); } catch {}
+          ws.iqDecim = decim; ws.iqDrops = 0; ws.iqBehindSince = 0; ws.iqSent = 0;
+          if (decim > 1 && !this._iqDecims.has(decim)) this._iqDecims.set(decim, new IqDecimator(decim));
+          ws.iqHelloKey = this._iqKey();
+          try { ws.send(JSON.stringify(this._iqHello(decim))); } catch {}
           this._notifyIqClients();
-          ws.on('close', () => this._notifyIqClients());
+          ws.on('close', () => { this._pruneDecims(); this._notifyIqClients(); });
         });
       } else {
         socket.destroy();
@@ -219,18 +239,64 @@ class AudioWsBridge {
     sendA(this.wssAudio, this.currentRate());
     sendA(this.wssAudio48, 48000);
     sendA(this.wssAudio2, this.audio2Rate);
-    if (this.wssIq) { const iq = JSON.stringify(this._iqHello()); this.wssIq.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) { try { c.send(iq); } catch {} } }); }
+    this._sendIqHellos();
   }
 
-  _iqHello() {
+  /** Re-announce centre/rate to IQ readers. stale=true: only those whose last hello no longer matches. */
+  _sendIqHellos(stale = false) {
+    if (!this.wssIq) return;
+    const key = this._iqKey();
+    this.wssIq.clients.forEach(c => {
+      if (stale && c.iqHelloKey === key) return;
+      c.iqHelloKey = key;
+      if (c.readyState === WebSocket.OPEN) { try { c.send(JSON.stringify(this._iqHello(c.iqDecim || 1))); } catch {} }
+    });
+  }
+
+  _iqKey() {
     const cfg = (this.sdr && this.sdr.config) || {};
+    return `${cfg.frequency || 0}/${cfg.sampleRate || 2000000}`;
+  }
+
+  _iqHello(decim = 1) {
+    const cfg = (this.sdr && this.sdr.config) || {};
+    const fs = cfg.sampleRate || 2000000;
     return {
-      sampleRate: cfg.sampleRate || 2000000,
+      sampleRate: Math.round(fs / decim),
       centerHz: cfg.frequency || 0,
       format: 'sc16',
       interleaved: true,
       endian: 'le',
+      decim,
     };
+  }
+
+  _pruneDecims() {
+    const live = new Set();
+    this.wssIq.clients.forEach(c => live.add(c.iqDecim || 1));
+    for (const f of [...this._iqDecims.keys()]) if (!live.has(f)) this._iqDecims.delete(f);
+  }
+
+  /** Send one IQ frame to one reader, bounded. Returns false if dropped. */
+  _sendIqBounded(c, buf, now) {
+    if (c.readyState !== WebSocket.OPEN) return false;
+    const fs = ((this.sdr && this.sdr.config && this.sdr.config.sampleRate) || 2000000) / (c.iqDecim || 1);
+    const limit = Math.max(IQ_MIN_BUFFER, fs * 4 * IQ_BUFFER_SECONDS);
+    if (c.bufferedAmount > limit) {
+      c.iqDrops++; this._iqDrops++;
+      if (!c.iqBehindSince) c.iqBehindSince = now;
+      else if (now - c.iqBehindSince > this.iqSlowReaderMs) {
+        this._iqSlowClosed++;
+        console.warn(`[AudioWS] /ws/iq reader (decim ${c.iqDecim || 1}) behind for ${now - c.iqBehindSince} ms — closing 1013`);
+        try { c.close(1013, 'slow reader'); } catch {}
+        setTimeout(() => { try { c.terminate(); } catch {} }, 2000).unref?.();
+      }
+      return false;
+    }
+    c.iqBehindSince = 0;
+    c.iqSent += buf.length;
+    try { c.send(buf); } catch {}
+    return true;
   }
 
   _notifyIqClients() {
@@ -239,23 +305,32 @@ class AudioWsBridge {
 
   _onIq(payload) {
     if (!this.wssIq.clients.size) return;
+    const now = Date.now();
     this._iqFrames++;
     this._iqBytes += payload.length;
-    this._iqLastAt = Date.now();
-    // Drop rather than buffer if a slow client falls behind (~2 MB backlog).
+    this._iqLastAt = now;
+    // POST /api/nrsp/config sets config.frequency before SDRconnect echoes it, so no 'retune'
+    // fires and readers kept a stale centre (uhf-iq ran 30 h DDC-ing at "100 MHz", 10 Oct 2026).
+    this._sendIqHellos(true);
+    const out = new Map([[1, payload]]);
+    for (const [f, d] of this._iqDecims) out.set(f, d.process(payload));
     this.wssIq.clients.forEach(c => {
-      if (c.readyState === WebSocket.OPEN && c.bufferedAmount < 1 << 21) {
-        try { c.send(payload); } catch {}
-      }
+      const buf = out.get(c.iqDecim || 1);
+      if (buf && buf.length) this._sendIqBounded(c, buf, now);
     });
   }
 
   iqStats() {
+    const readers = [];
+    this.wssIq.clients.forEach(c => readers.push({ decim: c.iqDecim || 1, bufferedAmount: c.bufferedAmount, drops: c.iqDrops || 0, sentBytes: c.iqSent || 0, behindMs: c.iqBehindSince ? Date.now() - c.iqBehindSince : 0 }));
     return {
       clients: this.wssIq.clients.size,
       frames: this._iqFrames,
       bytes: this._iqBytes,
       lastAt: this._iqLastAt,
+      drops: this._iqDrops,
+      slowClosed: this._iqSlowClosed,
+      readers,
       hello: this._iqHello(),
     };
   }
@@ -295,6 +370,9 @@ class AudioWsBridge {
         iqFrames: this._iqFrames,
         iqBytes: this._iqBytes,
         iqLastAt: this._iqLastAt,
+        iqDrops: this._iqDrops,
+        iqSlowClosed: this._iqSlowClosed,
+        iqReaders: this.iqStats().readers,
         iq: this._iqHello(),
         spectrumClients: this.wssSpectrum.clients.size,
         audio2Clients: this.wssAudio2.clients.size,
@@ -332,4 +410,15 @@ class AudioWsBridge {
   }
 }
 
+/** `?decim=N` → N (1 when absent). null = invalid (the upgrade is refused with 400). */
+function parseDecim(url) {
+  const q = (url || '').split('?')[1];
+  if (!q) return 1;
+  const v = new URLSearchParams(q).get('decim');
+  if (v === null || v === '' || v === '1') return 1;
+  const n = Number(v);
+  return FACTORS.includes(n) ? n : null;
+}
+
 module.exports = AudioWsBridge;
+module.exports.parseDecim = parseDecim;
