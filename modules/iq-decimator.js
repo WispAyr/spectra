@@ -11,6 +11,9 @@
  * to ±131 kHz and anything that would alias onto ±131 kHz is down ≥ 77 dB. Later stages of a ÷4
  * or ÷8 cascade have a narrower transition band (see test/iq-decimator.test.js for the numbers).
  * State is carried across chunks, so chunk boundaries are seamless.
+ *
+ * Hot path (halio is a loaded Pi 5 with swap full): one interleaved Float32 scratch per stage,
+ * grown once and reused — no per-chunk Float32 allocations; only the output Buffer is new.
  */
 'use strict';
 
@@ -20,38 +23,55 @@ const C3 = -0.056935;  // h[4] = h[10]
 const C5 = 0.009399;   // h[2] = h[12]
 const C7 = -0.000270;  // h[0] = h[14]
 const NORM = 1 / (0.5 + 2 * (C1 + C3 + C5 + C7)); // exact unity DC gain
+const K0 = 0.5 * NORM, K1 = C1 * NORM, K3 = C3 * NORM, K5 = C5 * NORM, K7 = C7 * NORM;
 const TAPS = 15;
-const HIST = TAPS - 1;
+const HIST = TAPS - 1;       // complex samples of history
+const H2 = HIST * 2;         // … as interleaved floats
 
 class HalfbandStage {
   constructor() {
-    this.hi = new Float32Array(HIST);
-    this.hq = new Float32Array(HIST);
+    this.buf = new Float32Array(H2 + 2 * 8192); // [history | new samples], interleaved I,Q
     this.count = 0; // input samples consumed so far (decides which inputs produce an output)
-    this._cap = 0; this._bi = null; this._bq = null; // scratch, grown to the largest chunk seen
   }
 
-  /** i, q: Float32Array of equal length. Returns {i, q} at half the rate. */
-  process(i, q) {
-    const n = i.length;
-    if (this._cap < HIST + n) { this._cap = HIST + n; this._bi = new Float32Array(this._cap); this._bq = new Float32Array(this._cap); }
-    const bi = this._bi, bq = this._bq;
-    bi.set(this.hi); bi.set(i, HIST);
-    bq.set(this.hq); bq.set(q, HIST);
-    // An output is produced for every input whose absolute index is even.
+  /** Make room for n new complex samples after the history; returns the scratch to fill at H2. */
+  room(n) {
+    if (this.buf.length < H2 + 2 * n) {
+      const b = new Float32Array(H2 + 2 * n);
+      b.set(this.buf.subarray(0, H2));
+      this.buf = b;
+    }
+    return this.buf;
+  }
+
+  /** Filter the n samples already written at buf[H2…]; write n/2-ish outputs into `out` (interleaved,
+   *  at outOff). Returns the number of complex outputs. */
+  run(n, out, outOff) {
+    const b = this.buf;
     const first = (this.count & 1) ? 1 : 0;
     const nOut = n > first ? ((n - first + 1) >> 1) : 0;
-    const oi = new Float32Array(nOut);
-    const oq = new Float32Array(nOut);
-    for (let k = 0, m = HIST + first; k < nOut; k++, m += 2) {
-      oi[k] = NORM * (0.5 * bi[m - 7] + C1 * (bi[m - 6] + bi[m - 8]) + C3 * (bi[m - 4] + bi[m - 10])
-        + C5 * (bi[m - 2] + bi[m - 12]) + C7 * (bi[m] + bi[m - 14]));
-      oq[k] = NORM * (0.5 * bq[m - 7] + C1 * (bq[m - 6] + bq[m - 8]) + C3 * (bq[m - 4] + bq[m - 10])
-        + C5 * (bq[m - 2] + bq[m - 12]) + C7 * (bq[m] + bq[m - 14]));
+    let o = outOff;
+    for (let k = 0, m = 2 * (HIST + first); k < nOut; k++, m += 4) {
+      // m indexes the newest sample's I; taps reach back 14 complex samples (28 floats).
+      out[o++] = K0 * b[m - 14] + K1 * (b[m - 12] + b[m - 16]) + K3 * (b[m - 8] + b[m - 20])
+        + K5 * (b[m - 4] + b[m - 24]) + K7 * (b[m] + b[m - 28]);
+      out[o++] = K0 * b[m - 13] + K1 * (b[m - 11] + b[m - 15]) + K3 * (b[m - 7] + b[m - 19])
+        + K5 * (b[m - 3] + b[m - 23]) + K7 * (b[m + 1] + b[m - 27]);
     }
-    this.hi.set(bi.subarray(n, n + HIST));
-    this.hq.set(bq.subarray(n, n + HIST));
+    b.copyWithin(0, 2 * n, 2 * n + H2); // keep the last HIST samples as history
     this.count += n;
+    return nOut;
+  }
+
+  /** Convenience for tests: Float32Array i, q in → {i, q} out. */
+  process(i, q) {
+    const n = i.length;
+    const b = this.room(n);
+    for (let k = 0; k < n; k++) { b[H2 + 2 * k] = i[k]; b[H2 + 2 * k + 1] = q[k]; }
+    const out = new Float32Array(n + 2);
+    const m = this.run(n, out, 0);
+    const oi = new Float32Array(m), oq = new Float32Array(m);
+    for (let k = 0; k < m; k++) { oi[k] = out[2 * k]; oq[k] = out[2 * k + 1]; }
     return { i: oi, q: oq };
   }
 }
@@ -64,7 +84,8 @@ class IqDecimator {
     this.factor = factor;
     this.stages = [];
     for (let f = factor; f > 1; f >>= 1) this.stages.push(new HalfbandStage());
-    this._odd = null; // a trailing odd byte pair is impossible for sc16, but a split sample is not
+    this._odd = null; // a ws frame can split a 4-byte sample
+    this._last = new Float32Array(2 * 4096);
   }
 
   /** payload: Buffer of interleaved s16-LE I/Q. Returns a Buffer in the same format at fs/factor. */
@@ -73,25 +94,35 @@ class IqDecimator {
     if (this._odd) { buf = Buffer.concat([this._odd, payload]); this._odd = null; }
     const whole = buf.length - (buf.length % 4);
     if (whole < buf.length) this._odd = Buffer.from(buf.subarray(whole));
-    const n = whole >> 2;
+    let n = whole >> 2;
     // Int16Array needs 2-byte alignment; ws frames usually are, copy when not. (Host is little-endian:
     // halio aarch64 and every Mac/x86 we run on — sc16 on the wire is LE.)
     const src = (buf.byteOffset & 1) ? Buffer.from(buf.subarray(0, whole)) : buf;
     const s16 = new Int16Array(src.buffer, src.byteOffset, n * 2);
-    let i = new Float32Array(n);
-    let q = new Float32Array(n);
-    for (let k = 0, j = 0; k < n; k++, j += 2) { i[k] = s16[j]; q[k] = s16[j + 1]; }
-    for (const s of this.stages) ({ i, q } = s.process(i, q));
-    const o16 = new Int16Array(i.length * 2);
-    for (let k = 0, j = 0; k < i.length; k++, j += 2) { o16[j] = clamp16(i[k]); o16[j + 1] = clamp16(q[k]); }
+
+    // Stage 1 reads straight from the s16 samples.
+    let st = this.stages[0];
+    let b = st.room(n);
+    for (let j = 0; j < 2 * n; j++) b[H2 + j] = s16[j];
+    for (let s = 0; s < this.stages.length; s++) {
+      const next = this.stages[s + 1];
+      let out, off;
+      if (next) { out = next.room((n >> 1) + 1); off = H2; } else {
+        if (this._last.length < n + 2) this._last = new Float32Array(n + 2);
+        out = this._last; off = 0;
+      }
+      n = st.run(n, out, off);
+      st = next;
+    }
+    const o16 = new Int16Array(2 * n);
+    const f = this._last;
+    for (let j = 0; j < 2 * n; j++) {
+      const r = Math.round(f[j]);
+      // clamp: Int16Array stores wrap, which would flip a full-scale burst's sign
+      o16[j] = r > 32767 ? 32767 : r < -32768 ? -32768 : r;
+    }
     return Buffer.from(o16.buffer, 0, o16.byteLength);
   }
 }
-
-function clamp16(v) {
-  const r = Math.round(v);
-  return r > 32767 ? 32767 : r < -32768 ? -32768 : r;
-}
-// Int16Array stores already wrap, so the clamp above is what keeps a full-scale burst from flipping sign.
 
 module.exports = { IqDecimator, HalfbandStage, FACTORS, TAPS };
