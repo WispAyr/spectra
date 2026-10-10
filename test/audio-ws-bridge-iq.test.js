@@ -38,7 +38,7 @@ test('?decim=2 reader gets a hello at fs/2 and half the bytes; a full-rate reade
   const b = await mkBridge();
   try {
     const half = await connect(b.port, '/ws/iq?decim=2');
-    const full = await connect(b.port, '/ws/iq');
+    const full = await connect(b.port, '/ws/iq?fresh=1');
     await until(() => half.msgs.length && full.msgs.length);
     assert.deepEqual([half.msgs[0].sampleRate, half.msgs[0].decim, half.msgs[0].centerHz], [1_000_000, 2, 455_625_000]);
     assert.deepEqual([full.msgs[0].sampleRate, full.msgs[0].decim], [2_000_000, 1]);
@@ -87,7 +87,7 @@ test('a centre change set without a retune event re-sends the hello before the n
 test('a reader that stops reading gets frames dropped, then is closed 1013 after the slow-reader window', async () => {
   const b = await mkBridge({ iqSlowReaderMs: 300 });
   try {
-    const r = await connect(b.port, '/ws/iq');
+    const r = await connect(b.port, '/ws/iq?fresh=1');
     await until(() => r.msgs.length === 1);
     r.ws._socket.pause(); // stop draining: kernel buffers fill, then ws.bufferedAmount climbs
     let code = null; r.ws.on('close', (c) => { code = c; });
@@ -102,5 +102,24 @@ test('a reader that stops reading gets frames dropped, then is closed 1013 after
     r.ws._socket.resume();
     await until(() => code !== null, 5000);
     assert.equal(code, 1013);
+  } finally { await b.close(); }
+});
+
+test('a plain /ws/iq reader keeps the old rules: no hello on a silent centre change, never evicted', async () => {
+  const b = await mkBridge({ iqSlowReaderMs: 200 });
+  try {
+    const r = await connect(b.port, '/ws/iq');
+    await until(() => r.msgs.length === 1);
+    assert.equal(r.msgs[0].decim, 1);
+    b.sdr.config.frequency = 100_000_000;
+    b.sdr.emit('iq', iqChunk(64));
+    await until(() => r.msgs.length === 2);
+    assert.ok(Buffer.isBuffer(r.msgs[1]), 'no extra hello for a legacy reader');
+    r.ws._socket.pause();
+    const t0 = Date.now();
+    while (Date.now() - t0 < 1500) { b.sdr.emit('iq', iqChunk(65_536)); await new Promise((res) => setImmediate(res)); }
+    assert.equal(b.bridge._iqSlowClosed, 0, 'legacy reader never closed');
+    assert.ok(b.bridge._iqDrops > 0, 'but frames above 2 MB buffered are dropped, as before');
+    r.ws._socket.resume(); r.ws.close();
   } finally { await b.close(); }
 });
