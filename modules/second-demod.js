@@ -26,7 +26,16 @@ class SecondDemod extends EventEmitter {
     this.enabled = opts.enabled !== false;
     this.active = false;   // client-gated: only process when a /ws/audio2 listener is present
     this.squelchEnabled = !!opts.squelchEnabled;
-    this.squelchLevel = opts.squelchLevel != null ? opts.squelchLevel : 0.004;
+    // Squelch (12 Oct 2026): measured and threshold are BOTH dB — the 12.5 kHz channel power above a tracked
+    // noise floor. squelchLevel = open margin in dB (legacy values < 1, e.g. the old 0.004 linear, mean "default").
+    this.squelchLevel = (opts.squelchLevel != null && opts.squelchLevel >= 1) ? opts.squelchLevel : 5;
+    this.squelchHangMs = opts.squelchHangMs || 400;
+    this.chanDb = -200; this.floorDb = null; this.sqOpen = false; this._sqUntil = 0;
+    // 12.5 kHz channel filter at fsAudio, BEFORE the discriminator (12 Oct 2026). The CIC alone passed +-20 kHz,
+    // so the 455.7125 data bursts and the van spur comb reached the discriminator and clicked at ~88 Hz.
+    this.chanCutHz = opts.chanCutHz || 6000;
+    this._fir = SecondDemod.lowpass(opts.chanTaps || 95, this.chanCutHz / (this.fsIn / (opts.decim || 50)));
+    this._hI = new Float64Array(this._fir.length); this._hQ = new Float64Array(this._fir.length); this._hP = 0;
     this.gain = opts.gain != null ? opts.gain : 1.0;
     this.audioScale = opts.audioScale || 11000;      // rad -> int16 amplitude
 
@@ -51,6 +60,18 @@ class SecondDemod extends EventEmitter {
     this.sdr.on('iq', this._onIq);
   }
 
+  /** Blackman-windowed sinc low-pass, unity DC gain. fc = cutoff / fs. */
+  static lowpass(n, fc) {
+    const h = new Float64Array(n), m = (n - 1) / 2; let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i - m, sinc = x === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * x) / (Math.PI * x);
+      const w = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)) + 0.08 * Math.cos(4 * Math.PI * i / (n - 1));
+      h[i] = sinc * w; sum += h[i];
+    }
+    for (let i = 0; i < n; i++) h[i] /= sum;
+    return h;
+  }
+
   _setOsc() {
     const off = this.targetHz - this.centerHz;          // shift +off to DC
     const w = 2 * Math.PI * off / this.fsIn;
@@ -63,14 +84,16 @@ class SecondDemod extends EventEmitter {
   setEnabled(on) { this.enabled = !!on; }
   setActive(on) { this.active = !!on; }
   setGain(g) { if (g > 0) this.gain = g; }
-  setSquelch(on, level) { this.squelchEnabled = !!on; if (level != null) this.squelchLevel = level; }
+  setSquelch(on, level) { this.squelchEnabled = !!on; if (level != null && level >= 1) this.squelchLevel = level; }
 
   stats() {
     return {
       enabled: this.enabled, active: this.active, targetHz: this.targetHz, centerHz: this.centerHz,
       fsAudio: this.fsAudio, offsetHz: this.targetHz - this.centerHz,
       frames: this.frames, bytes: this.bytes, lastAt: this.lastAt,
-      rms: +this.rms.toFixed(5), squelch: this.squelchEnabled, squelchLevel: this.squelchLevel,
+      rms: +this.rms.toFixed(5), squelch: this.squelchEnabled, squelchLevel: this.squelchLevel, squelchUnit: "dB above floor",
+      chanDb: +this.chanDb.toFixed(1), floorDb: this.floorDb == null ? null : +this.floorDb.toFixed(1), squelchOpen: this.sqOpen,
+      chanFilterHz: this.chanCutHz * 2,
       inWindow: Math.abs(this.targetHz - this.centerHz) < this.fsIn / 2,
     };
   }
@@ -115,12 +138,19 @@ class SecondDemod extends EventEmitter {
         let x = i2, d0 = x - cIp[0]; cIp[0] = x;
         let d1 = d0 - cIp[1]; cIp[1] = d0;
         let d2 = d1 - cIp[2]; cIp[2] = d1;
-        const bi = d2 / cicGain;
+        const bi0 = d2 / cicGain;
         // 3rd-order comb, Q
         x = q2; d0 = x - cQp[0]; cQp[0] = x;
         d1 = d0 - cQp[1]; cQp[1] = d0;
         d2 = d1 - cQp[2]; cQp[2] = d1;
-        const bq = d2 / cicGain;
+        const bq0 = d2 / cicGain;
+
+        // 12.5 kHz channel FIR (circular history)
+        const hI = this._hI, hQ = this._hQ, fir = this._fir, L = fir.length;
+        let hp = this._hP; hI[hp] = bi0; hQ[hp] = bq0;
+        let bi = 0, bq = 0;
+        for (let t = 0, j = hp; t < L; t++) { bi += fir[t] * hI[j]; bq += fir[t] * hQ[j]; if (--j < 0) j = L - 1; }
+        this._hP = (hp + 1) % L;
 
         sumSq += bi * bi + bq * bq; cnt++;
 
@@ -150,11 +180,22 @@ class SecondDemod extends EventEmitter {
     this._iQ[0] = q0; this._iQ[1] = q1; this._iQ[2] = q2;
     this._n = n; this._pre = pre; this._pim = pim;
     this._dc = dc; this._deemph = deemph; this._lpf = lpf;
-    if (cnt > 0) this.rms = Math.sqrt(sumSq / cnt) / 32768;
+    if (cnt > 0) {
+      this.rms = Math.sqrt(sumSq / cnt) / 32768;
+      // Channel power (filtered) in dB, and a floor that drops fast and rises slowly (~100 s), so a long over
+      // does not pull it up but a changed noise environment is learned.
+      const db = 10 * Math.log10(sumSq / cnt / (32768 * 32768) + 1e-30);
+      this.chanDb = db;
+      if (this.floorDb == null || db < this.floorDb) this.floorDb = this.floorDb == null ? db : this.floorDb + 0.3 * (db - this.floorDb);
+      else this.floorDb += 0.0005 * (db - this.floorDb);
+      const now = Date.now(), margin = db - this.floorDb;
+      if (margin >= this.squelchLevel) { this.sqOpen = true; this._sqUntil = now + this.squelchHangMs; }
+      else if (margin < this.squelchLevel - 3 && now > this._sqUntil) this.sqOpen = false;
+    }
 
     if (outN > 0) {
       const payload = Buffer.allocUnsafe(outN * 2);
-      if (this.squelchEnabled && this.rms < this.squelchLevel) {
+      if (this.squelchEnabled && !this.sqOpen) {
         payload.fill(0);
       } else {
         for (let i = 0; i < outN; i++) payload.writeInt16LE(out[i], i * 2);
