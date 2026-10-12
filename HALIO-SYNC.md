@@ -45,3 +45,63 @@ Rollback to the 19:23 version: `cp ~/backups/spectra-ch2-20261012-1941-v2/second
 clear, reading you fives…"). Same model (medium.en-atc, shared whisper-server :4092). A/B on the 19:43 radio-check clip: with
 the new prompt the ATC model gives "roger five five eight radio check how do you read five five"; it was logged as
 "departure five five eight into checker…". Backup: `~/operations/fire-whisper/backup-20261012-1951/`.
+
+## 2026-10-12 20:17 BST — nRSP receiver PPM correction (+1.40 ppm)
+Ewan approved (20:09). RX only; no TX, UHF not armed, crosspoint-hub not touched. One `pm2 restart spectra` at 20:17:15;
+`/ws/audio` (tower) was flowing again 3.4 s later.
+
+- **Measured before:** the 455.625 tower carrier read **−637 Hz** live (discriminator mean, 20:15; −641 Hz from the 19:38 FFT
+  capture). The nRSP TCXO runs ~1.40 ppm fast, so every signal read low (fire 455.700 read ~−1.2 kHz; ~−0.57 kHz is the handsets).
+- **How:** SDRconnect headless exposes no ppm property on its websocket (`ppm_correction` etc. return nothing), so
+  `modules/sdr-manager.js` now pre-compensates the commanded centre: `config.nrsp.ppmCorrection = 1.40` →
+  `device_center_frequency` / `device_vfo_frequency` = round(f × (1 − ppm·1e-6)) = **455 624 362** for 455.625. The echoed centre
+  is mapped back to nominal, so `config.frequency`, `/api/nrsp/config`, IQ hellos, uhf-iq and ch2 all still say 455 625 000.
+  Positive ppm = receiver fast / signals read low. Re-applied automatically on every SDRconnect reconnect.
+- **Measured after:** tower carrier median **+11 Hz** and **−5 Hz** on two live tower overs (20:44, 20:48; spectral centroid, 0.13 s
+  blocks, DC excluded). ch2 still targets 455.700 (offset 75 kHz); fire squelch shut with no traffic (quiet 0.53 vs open < 0.3).
+- **Note:** SDRconnect segfaulted 4× (20:15–20:27, first one *before* this change) while ad-hoc 250 kS/s `/ws/iq?decim=8` captures
+  ran and the Pi was at load ~20–28; none since 20:27 with no extra decim=8 reader. Avoid new decim=8 IQ readers on halio.
+
+Rollback: `cp ~/backups/spectra-ppm-20261012-201222/{config.json,sdr-manager.js} …` (config.json → ~/spectra/,
+sdr-manager.js → ~/spectra/modules/) then `pm2 restart spectra`; or set `nrsp.ppmCorrection` to 0.
+
+Patch as applied on van-halio (van tree has other uncommitted sdr-manager.js changes, so this is recorded here, not committed):
+
+```diff
+--- /home/wispayr/backups/spectra-ppm-20261012-201222/sdr-manager.js	2026-10-12 20:12:22.784205615 +0100
++++ /home/wispayr/spectra/modules/sdr-manager.js	2026-10-12 20:17:04.391832960 +0100
+@@ -305,9 +305,20 @@
+     try { this.ws.send(JSON.stringify(obj)); } catch (e) { /* ignore */ }
+   }
+ 
++  _ppm() { const v = Number(this.config.ppmCorrection); return Number.isFinite(v) ? v : 0; }
++  _hwFreq(nominal) { return Math.round(nominal * (1 - this._ppm() * 1e-6)); }
++  _nominalFreq(hw) { return Math.round(hw * (1 + this._ppm() * 1e-6)); }
++
+   _sendTune() {
+     if (this.config.frequency) {
+-      this._send({ event_type: "set_property", property: "device_center_frequency", value: String(this.config.frequency), device: "primary" });
++      // Receiver PPM correction (2026-10-12): SDRconnect headless exposes no
++      // ppm property over the websocket, so we pre-compensate the commanded
++      // centre. config.nrsp.ppmCorrection > 0 means the nRSP TCXO runs fast
++      // (signals read LOW). +1.40 ppm measured from the 455.625 tower carrier
++      // (-637 Hz). Everything downstream keeps using the NOMINAL frequency.
++      const _hw = this._hwFreq(this.config.frequency);
++      this._send({ event_type: "set_property", property: "device_center_frequency", value: String(_hw), device: "primary" });
++      this._send({ event_type: "set_property", property: "device_vfo_frequency", value: String(_hw), device: "primary" });
+     }
+     if (this.config.sampleRate) {
+       this._send({ event_type: "set_property", property: "device_sample_rate", value: String(this.config.sampleRate), device: "primary" });
+@@ -440,7 +451,10 @@
+         case "device_vfo_frequency": this.vfoFrequency = parseInt(val, 10); break;
+         case "signal_snr": this.signalSnr = parseFloat(val); break;
+         case "device_center_frequency": {
+-          const _nf = parseInt(val, 10) || this.config.frequency;
++          const _raw = parseInt(val, 10);
++          let _nf = _raw ? this._nominalFreq(_raw) : this.config.frequency;
++          if (Math.abs(_nf - this.config.frequency) <= 2) _nf = this.config.frequency;
++          this.hwCenterFrequency = _raw || null;
+           if (_nf !== this.config.frequency) { this.config.frequency = _nf; this.emit("retune", _nf); }
+           break;
+         }
+```
