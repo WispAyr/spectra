@@ -28,9 +28,11 @@ class SecondDemod extends EventEmitter {
     this.squelchEnabled = !!opts.squelchEnabled;
     // Squelch (12 Oct 2026): measured and threshold are BOTH dB — the 12.5 kHz channel power above a tracked
     // noise floor. squelchLevel = open margin in dB (legacy values < 1, e.g. the old 0.004 linear, mean "default").
-    this.squelchLevel = (opts.squelchLevel != null && opts.squelchLevel >= 1) ? opts.squelchLevel : 5;
+    this.squelchLevel = (opts.squelchLevel != null && opts.squelchLevel >= 1) ? opts.squelchLevel : 10;
     this.squelchHangMs = opts.squelchHangMs || 400;
-    this.chanDb = -200; this.floorDb = null; this.sqOpen = false; this._sqUntil = 0;
+    this.chanDb = -200; this.floorDb = null; this.quiet = 9;
+    // quieting threshold: ~10 dB carrier-to-noise in 12.5 kHz. squelchLevel (dB) maps to it: 10 dB -> 0.3 rad^2.
+    this.quietOpen = opts.quietOpen || 0.3 * Math.pow(10, (10 - ((opts.squelchLevel >= 1) ? opts.squelchLevel : 10)) / 20); this.sqOpen = false; this._sqUntil = 0;
     // 12.5 kHz channel filter at fsAudio, BEFORE the discriminator (12 Oct 2026). The CIC alone passed +-20 kHz,
     // so the 455.7125 data bursts and the van spur comb reached the discriminator and clicked at ~88 Hz.
     this.chanCutHz = opts.chanCutHz || 6000;
@@ -91,8 +93,8 @@ class SecondDemod extends EventEmitter {
       enabled: this.enabled, active: this.active, targetHz: this.targetHz, centerHz: this.centerHz,
       fsAudio: this.fsAudio, offsetHz: this.targetHz - this.centerHz,
       frames: this.frames, bytes: this.bytes, lastAt: this.lastAt,
-      rms: +this.rms.toFixed(5), squelch: this.squelchEnabled, squelchLevel: this.squelchLevel, squelchUnit: "dB above floor",
-      chanDb: +this.chanDb.toFixed(1), floorDb: this.floorDb == null ? null : +this.floorDb.toFixed(1), squelchOpen: this.sqOpen,
+      rms: +this.rms.toFixed(5), squelch: this.squelchEnabled, squelchLevel: this.squelchLevel, squelchUnit: "dB C/N (FM quieting on the 12.5 kHz channel)",
+      chanDb: +this.chanDb.toFixed(1), quiet: +this.quiet.toFixed(3), quietOpen: this.quietOpen, floorDb: this.floorDb == null ? null : +this.floorDb.toFixed(1), squelchOpen: this.sqOpen,
       chanFilterHz: this.chanCutHz * 2,
       inWindow: Math.abs(this.targetHz - this.centerHz) < this.fsIn / 2,
     };
@@ -120,30 +122,33 @@ class SecondDemod extends EventEmitter {
     const cIp = this._cIp, cQp = this._cQp;
     let n = this._n, pre = this._pre, pim = this._pim;
     let dc = this._dc, deemph = this._deemph, lpf = this._lpf;
-    let sumSq = 0, cnt = 0;
+    let sumSq = 0, cnt = 0, angSq = 0;
 
     for (let k = 0; k < nSamp; k++) {
       const I = iq[k * 2], Q = iq[k * 2 + 1];
       // down-convert
-      const re = I * or - Q * oi;
-      const im = I * oi + Q * or;
+      // CIC in 32-bit two's-complement wrap (12 Oct 2026 v2). In float64 the 3rd-order integrators grow without bound
+      // and lose precision within minutes: channel noise rose ~60 dB over 15 min and held the squelch open.
+      // 14-bit input (>>2) + 3*log2(50)=17 bits of growth fits 31 bits, so the comb output is exact.
+      const re = Math.round((I * or - Q * oi) * 0.25) | 0;
+      const im = Math.round((I * oi + Q * or) * 0.25) | 0;
       const nor = or * c + oi * sN;      // osc *= e^{-jw}
       oi = oi * c - or * sN; or = nor;
       // CIC integrators
-      i0 += re; i1 += i0; i2 += i1;
-      q0 += im; q1 += q0; q2 += q1;
+      i0 = (i0 + re) | 0; i1 = (i1 + i0) | 0; i2 = (i2 + i1) | 0;
+      q0 = (q0 + im) | 0; q1 = (q1 + q0) | 0; q2 = (q2 + q1) | 0;
       if (++n >= R) {
         n = 0;
         // 3rd-order comb, I
-        let x = i2, d0 = x - cIp[0]; cIp[0] = x;
-        let d1 = d0 - cIp[1]; cIp[1] = d0;
-        let d2 = d1 - cIp[2]; cIp[2] = d1;
-        const bi0 = d2 / cicGain;
+        let x = i2, d0 = (x - cIp[0]) | 0; cIp[0] = x;
+        let d1 = (d0 - cIp[1]) | 0; cIp[1] = d0;
+        let d2 = (d1 - cIp[2]) | 0; cIp[2] = d1;
+        const bi0 = d2 * 4 / cicGain;
         // 3rd-order comb, Q
-        x = q2; d0 = x - cQp[0]; cQp[0] = x;
-        d1 = d0 - cQp[1]; cQp[1] = d0;
-        d2 = d1 - cQp[2]; cQp[2] = d1;
-        const bq0 = d2 / cicGain;
+        x = q2; d0 = (x - cQp[0]) | 0; cQp[0] = x;
+        d1 = (d0 - cQp[1]) | 0; cQp[1] = d0;
+        d2 = (d1 - cQp[2]) | 0; cQp[2] = d1;
+        const bq0 = d2 * 4 / cicGain;
 
         // 12.5 kHz channel FIR (circular history)
         const hI = this._hI, hQ = this._hQ, fir = this._fir, L = fir.length;
@@ -159,6 +164,7 @@ class SecondDemod extends EventEmitter {
         const yi = bq * pre - bi * pim;
         pre = bi; pim = bq;
         const ang = Math.atan2(yi, yr);
+        angSq += ang * ang;
 
         dc = 0.9995 * dc + 0.0005 * ang;         // remove carrier offset
         const a = ang - dc;
@@ -188,9 +194,13 @@ class SecondDemod extends EventEmitter {
       this.chanDb = db;
       if (this.floorDb == null || db < this.floorDb) this.floorDb = this.floorDb == null ? db : this.floorDb + 0.3 * (db - this.floorDb);
       else this.floorDb += 0.0005 * (db - this.floorDb);
+      // Noise squelch (v2): FM quieting on the filtered channel. Noise gives a discriminator variance of ~1.2 rad^2
+      // (through the 12 kHz filter); a carrier ~10 dB over the noise quiets it below ~0.3. Power-over-floor alone was
+      // fooled by whole-band level steps (~13 dB) on the van. Both are reported; quieting decides.
+      this.quiet = angSq / cnt;
       const now = Date.now(), margin = db - this.floorDb;
-      if (margin >= this.squelchLevel) { this.sqOpen = true; this._sqUntil = now + this.squelchHangMs; }
-      else if (margin < this.squelchLevel - 3 && now > this._sqUntil) this.sqOpen = false;
+      if (this.quiet < this.quietOpen) { this.sqOpen = true; this._sqUntil = now + this.squelchHangMs; }
+      else if (this.quiet > this.quietOpen * 1.5 && now > this._sqUntil) this.sqOpen = false;
     }
 
     if (outN > 0) {
