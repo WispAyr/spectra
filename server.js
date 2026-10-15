@@ -19,6 +19,7 @@ const IotFeed = require('./modules/iot-feed');
 const SpectrumScanner = require('./modules/spectrum-scanner');
 const RecordingManager = require('./modules/recording-manager');
 const SignalLog = require('./modules/signal-log');
+const IqTcpServer = require('./modules/iq-tcp-server');
 
 const app = express();
 const server = http.createServer(app);
@@ -103,6 +104,12 @@ const scanner = config.scanner.enabled ? new SpectrumScanner(config.scanner, sdr
   }
 }) : null;
 
+// IQ-as-rtl_tcp bridge: lets readsb / rtl_433 / rtl_ais consume the nRSP-ST
+// over the WebSocket SDRconnect feed as if it were a USB RTL-SDR dongle.
+const iqBridge = (config.iqBridge && config.iqBridge.enabled !== false)
+  ? new IqTcpServer(config.iqBridge || {}, sdrManager)
+  : null;
+
 const recorder = new RecordingManager(config.recording, sdrManager, {
   onStart: (rec) => {
     state.recordings.unshift(rec);
@@ -119,6 +126,7 @@ const recorder = new RecordingManager(config.recording, sdrManager, {
 
 // Status
 app.get('/api/status', (req, res) => {
+  const fft = sdrManager.getLastFft();
   res.json({
     connected: state.connected,
     uptime: Math.floor((Date.now() - state.startTime) / 1000),
@@ -126,8 +134,18 @@ app.get('/api/status', (req, res) => {
     aprsCount: Object.keys(state.aprsStations).length,
     iotDeviceCount: Object.keys(state.iotDevices).length,
     signalCounts: state.signalCounts,
+    sdr: {
+      connected: fft.connected,
+      activeDevice: fft.activeDevice,
+      frequency: fft.frequency,
+      bandwidth: fft.bandwidth,
+      signalPower: fft.signalPower,
+      signalSnr: fft.signalSnr,
+      lastSpectrumAt: fft.timestamp
+    },
+    scanner: scanner ? scanner.status() : { running: false, realDataAvailable: false, backend: null },
     config: {
-      nrsp: { host: config.nrsp.host, webPort: config.nrsp.webPort },
+      nrsp: { host: config.nrsp.host, wsPort: config.nrsp.wsPort },
       decoders: Object.fromEntries(
         Object.entries(config.decoders).map(([k, v]) => [k, { enabled: v.enabled }])
       )
@@ -306,6 +324,7 @@ server.listen(PORT, config.server.host, () => {
 
   // Start all feeds
   sdrManager.connect();
+  if (iqBridge) iqBridge.start();
   if (adsbFeed) adsbFeed.start();
   if (aprsFeed) aprsFeed.start();
   if (iotFeed) iotFeed.start();
@@ -318,6 +337,7 @@ process.on('SIGINT', () => {
   if (aprsFeed) aprsFeed.stop();
   if (iotFeed) iotFeed.stop();
   if (scanner) scanner.stop();
+  if (iqBridge) iqBridge.stop();
   recorder.stopAll();
   process.exit(0);
 });

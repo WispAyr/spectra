@@ -1,7 +1,7 @@
 /**
  * iot-feed.js — IoT/ISM signal decoder feed via rtl_433
- * Spawns rtl_433 with SoapySDR pointing at rsp_tcp endpoint
- * Falls back to demo mode simulating ISM devices
+ * Spawns rtl_433 with SoapySDR pointing at rsp_tcp endpoint.
+ * No data is emitted unless rtl_433 actually decodes packets.
  */
 
 const { spawn } = require('child_process');
@@ -12,8 +12,7 @@ class IotFeed {
     this.onDevice = callbacks.onDevice;
     this.proc = null;
     this.running = false;
-    this.demoMode = false;
-    this.demoInterval = null;
+    this.connected = false;
   }
 
   start() {
@@ -28,7 +27,6 @@ class IotFeed {
       this.proc.kill();
       this.proc = null;
     }
-    if (this.demoInterval) clearInterval(this.demoInterval);
     console.log('[IoT] Feed stopped');
   }
 
@@ -49,6 +47,7 @@ class IotFeed {
 
     try {
       this.proc = spawn('rtl_433', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      this.connected = true;
 
       this.proc.stdout.on('data', (data) => {
         const lines = data.toString().split('\n');
@@ -65,22 +64,21 @@ class IotFeed {
       });
 
       this.proc.on('close', (code) => {
+        this.connected = false;
         if (this.running) {
-          console.log(`[IoT] rtl_433 exited (${code}) — retrying...`);
-          setTimeout(() => this._spawnRtl433(), 10000);
+          console.log(`[IoT] rtl_433 exited (${code}) — retrying in 30s`);
+          setTimeout(() => this._spawnRtl433(), 30000);
         }
       });
 
-      this.proc.on('error', () => {
-        if (!this.demoMode) {
-          console.log('[IoT] rtl_433 not found — starting demo mode');
-          this._startDemoMode();
-        }
+      this.proc.on('error', (err) => {
+        this.connected = false;
+        console.log(`[IoT] rtl_433 spawn error: ${err.code || err.message}`);
       });
 
     } catch (e) {
-      console.log('[IoT] rtl_433 unavailable — demo mode');
-      this._startDemoMode();
+      this.connected = false;
+      console.log(`[IoT] rtl_433 unavailable: ${e.message}`);
     }
   }
 
@@ -122,52 +120,6 @@ class IotFeed {
     return 'unknown';
   }
 
-  _startDemoMode() {
-    this.demoMode = true;
-
-    const demoDevices = [
-      { model: 'Schrader-SMD3MA2-TPMS', id: 0xDE1A, type: 'tpms', pressure_kPa: 240, temperature_C: 22 },
-      { model: 'Schrader-SMD3MA2-TPMS', id: 0xDE1B, type: 'tpms', pressure_kPa: 238, temperature_C: 23 },
-      { model: 'Schrader-SMD3MA2-TPMS', id: 0xDE1C, type: 'tpms', pressure_kPa: 241, temperature_C: 21 },
-      { model: 'Schrader-SMD3MA2-TPMS', id: 0xDE1D, type: 'tpms', pressure_kPa: 239, temperature_C: 22 },
-      { model: 'Oregon-THGR122N', id: 1, channel: 1, type: 'weather', temperature_C: 18.5, humidity: 62, battery_ok: 1 },
-      { model: 'LaCrosse-TX141W', id: 2, channel: 0, type: 'weather', temperature_C: 12.1, humidity: 75, battery_ok: 1 },
-      { model: 'Generic-Security', id: 0xAB12, type: 'security', code: '101010110100' }
-    ];
-
-    let tick = 0;
-    demoDevices.forEach(d => {
-      const dev = {
-        ...d,
-        rssi: -70 + Math.random() * 20,
-        snr: 10 + Math.random() * 15,
-        timestamp: new Date().toISOString()
-      };
-      this.onDevice(dev);
-    });
-
-    this.demoInterval = setInterval(() => {
-      tick++;
-      const dev = demoDevices[tick % demoDevices.length];
-
-      // Vary sensor readings
-      if (dev.type === 'tpms') {
-        dev.pressure_kPa += (Math.random() - 0.5) * 2;
-        dev.temperature_C += (Math.random() - 0.5) * 0.5;
-      }
-      if (dev.type === 'weather') {
-        dev.temperature_C += (Math.random() - 0.5) * 0.3;
-        dev.humidity = Math.max(20, Math.min(100, dev.humidity + (Math.random() - 0.5) * 2));
-      }
-
-      this.onDevice({
-        ...dev,
-        rssi: -70 + Math.random() * 20,
-        snr: 10 + Math.random() * 15,
-        timestamp: new Date().toISOString()
-      });
-    }, 5000);
-  }
 }
 
 module.exports = IotFeed;

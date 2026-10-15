@@ -27,8 +27,8 @@
   </div>
 
   <div class="sidebar__status" id="sdr-status">
-    <div class="status-dot status-dot--demo" id="status-dot"></div>
-    <span id="status-text">Demo Mode</span>
+    <div class="status-dot status-dot--offline" id="status-dot"></div>
+    <span id="status-text">Connecting…</span>
   </div>
 
   <ul class="sidebar__nav">
@@ -234,7 +234,6 @@
       <span id="wf-cursor-freq">—</span>
       <span id="wf-cursor-power">—</span>
       <span id="wf-center">Center: <b id="wf-center-val">100.000 MHz</b></span>
-      <span id="wf-demo-badge" class="demo-badge">DEMO MODE</span>
     </div>
   </section>
 
@@ -329,18 +328,77 @@
     </div>
   </section>
 
-  <!-- ── nRSP-ST Native UI ──────────────────────────────────── -->
+  <!-- ── nRSP-ST Control ─────────────────────────────────────── -->
   <section class="page" id="page-nrsp">
     <div class="page-header">
       <h1 class="page-title">nRSP-ST Control</h1>
-      <div class="page-subtitle">Native SDRplay web interface</div>
+      <div class="page-subtitle">Live state and tuning for the SDRplay nRSP-ST network SDR</div>
     </div>
-    <div class="nrsp-embed-wrap">
-      <div class="nrsp-embed-bar">
-        <span id="nrsp-url-display">Loading…</span>
-        <a id="nrsp-open-link" href="#" target="_blank" class="btn btn--sm">Open in tab ↗</a>
+
+    <div class="settings-grid">
+      <div class="glass-card settings-card">
+        <h3>Live state</h3>
+        <div class="field-group"><label>Device</label><div id="nrsp-device">—</div></div>
+        <div class="field-group"><label>Status</label><div id="nrsp-conn">—</div></div>
+        <div class="field-group"><label>Frequency</label><div id="nrsp-freq">—</div></div>
+        <div class="field-group"><label>Bandwidth</label><div id="nrsp-bw">—</div></div>
+        <div class="field-group"><label>Signal power</label><div id="nrsp-power">—</div></div>
+        <div class="field-group"><label>SNR</label><div id="nrsp-snr">—</div></div>
+        <div class="field-group"><label>Last spectrum</label><div id="nrsp-last">—</div></div>
       </div>
-      <iframe id="nrsp-iframe" class="nrsp-iframe" src="about:blank" title="nRSP-ST Native Interface"></iframe>
+
+      <div class="glass-card settings-card">
+        <h3>Tuning</h3>
+        <div class="field-group">
+          <label>Frequency (MHz)</label>
+          <input type="number" id="nrsp-set-freq" class="freq-input" step="0.001" min="0.001" max="2000">
+        </div>
+        <div class="field-group">
+          <label>Bandwidth (Hz)</label>
+          <select id="nrsp-set-bw" class="freq-input">
+            <option value="200000">200 kHz</option>
+            <option value="600000">600 kHz</option>
+            <option value="1536000" selected>1.536 MHz</option>
+            <option value="5000000">5 MHz</option>
+            <option value="6000000">6 MHz</option>
+            <option value="7000000">7 MHz</option>
+            <option value="8000000">8 MHz</option>
+            <option value="10000000">10 MHz</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Antenna port</label>
+          <select id="nrsp-set-ant" class="freq-input">
+            <option value="A">A (50 Ω)</option>
+            <option value="B">B (50 Ω)</option>
+            <option value="HiZ">HiZ (HF)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Gain reduction (dB)</label>
+          <input type="number" id="nrsp-set-gain" class="freq-input" min="0" max="59" step="1" value="40">
+        </div>
+        <button id="nrsp-apply" class="btn">Apply</button>
+        <div id="nrsp-apply-status" class="muted" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="glass-card settings-card">
+        <h3>SDRconnect endpoints</h3>
+        <p class="muted">The nRSP-ST hardware (<code id="nrsp-device-ip">10.42.42.42</code>) exposes its own web UI and streaming API. Both are forwarded through the halio so they're reachable over WG:</p>
+        <div class="field-group"><label>SDRconnect Web (HTTP/1.1, no cert prompt)</label><a id="nrsp-web-link" href="#" target="_blank" class="freq-input">—</a></div>
+        <div class="field-group"><label>SDRconnect Web (HTTPS + HTTP/2, faster — accept self-signed cert once)</label><a id="nrsp-web-link-h2" href="#" target="_blank" class="freq-input">—</a></div>
+        <div class="field-group"><label>HTTPS streaming/control (8081)</label><div class="freq-input" id="nrsp-https-endpoint">—</div></div>
+        <div class="field-group"><label>SDRconnect headless WebSocket (halio)</label><div class="freq-input" id="nrsp-ws-endpoint">ws://10.200.0.11:9100</div></div>
+        <p class="muted">Default admin password = device serial. The HTTPS link multiplexes all 187 framework files over a single TCP connection and gzip-compresses on the wire — ~20% faster than the HTTP one for cold loads. Use SPECTRA's Spectrum tab for in-browser waterfall + tuning without leaving this UI.</p>
+      </div>
+    </div>
+
+    <div class="glass-card" style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;">
+        <h3 style="margin:0;">SDRconnect Web (embedded)</h3>
+        <a id="nrsp-web-open" href="#" target="_blank" class="btn btn--sm">Open in tab ↗</a>
+      </div>
+      <iframe id="nrsp-web-iframe" src="about:blank" style="width:100%;height:720px;border:0;border-top:1px solid rgba(255,255,255,0.08);background:#fff;" title="SDRconnect Web"></iframe>
     </div>
   </section>
 

@@ -1,147 +1,126 @@
 /**
  * adsb-feed.js — ADS-B decoder feed
- * Connects to dump1090-fa Beast TCP socket on port 30005
- * Also polls JSON aircraft data on port 30003 as fallback
- * In demo mode, generates realistic simulated aircraft
+ * Polls readsb's aircraft.json (standard FA/readsb format) from disk.
+ * readsb is fed by SPECTRA's iq-tcp-server, which wraps the SDRconnect
+ * WebSocket as an rtl_tcp source.
+ * No data is emitted unless readsb is producing fresh output.
  */
 
-const net = require('net');
+const fs = require('fs');
+
+const SEEN_GRACE_SEC = 60;       // emit timeout if not seen for this long
+const STALE_FILE_SEC = 30;       // ignore file if mtime older than this
 
 class AdsbFeed {
   constructor(config, callbacks) {
     this.config = config;
     this.onAircraft = callbacks.onAircraft;
     this.onTimeout = callbacks.onTimeout;
-    this.socket = null;
+    this.jsonPath = config.jsonPath || '/run/readsb/aircraft.json';
+    this.pollMs = config.pollMs || 2000;
     this.running = false;
-    this.demoMode = false;
-    this.demoInterval = null;
-    this.demoAircraft = this._generateDemoFleet();
+    this.connected = false;
+    this.timer = null;
+    this.tracked = new Map(); // hex -> { lastSeen: ms, lat, lon, ... }
   }
 
   start() {
     this.running = true;
-    console.log('[ADS-B] Starting feed...');
-    this._connectBeast();
+    console.log(`[ADS-B] starting feed, polling ${this.jsonPath} every ${this.pollMs}ms`);
+    this._loop();
   }
 
   stop() {
     this.running = false;
-    if (this.socket) this.socket.destroy();
-    if (this.demoInterval) clearInterval(this.demoInterval);
-    console.log('[ADS-B] Feed stopped');
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    console.log('[ADS-B] feed stopped');
   }
 
-  _connectBeast() {
-    this.socket = new net.Socket();
-    this.socket.setTimeout(8000);
-
-    this.socket.connect(this.config.port, this.config.host, () => {
-      console.log('[ADS-B] Connected to dump1090 Beast socket');
-      this.demoMode = false;
-      if (this.demoInterval) {
-        clearInterval(this.demoInterval);
-        this.demoInterval = null;
-      }
-    });
-
-    this.socket.on('data', (data) => {
-      this._parseBeast(data);
-    });
-
-    this.socket.on('error', () => {
-      if (!this.demoMode) {
-        console.log('[ADS-B] dump1090 not available — starting demo mode');
-        this._startDemoMode();
-      }
-      this.socket.destroy();
-      if (this.running) {
-        setTimeout(() => this._connectBeast(), 15000);
-      }
-    });
-
-    this.socket.on('timeout', () => {
-      this.socket.destroy();
-      if (!this.demoMode) this._startDemoMode();
-    });
-  }
-
-  _parseBeast(data) {
-    // Beast binary format parser (simplified)
-    // Real implementation: parse 0x1A framing, extract MLAT, Mode-S, etc.
-    // For now, emit raw event that backend accumulates
-  }
-
-  _startDemoMode() {
-    this.demoMode = true;
-    let tick = 0;
-
-    this.demoInterval = setInterval(() => {
-      tick++;
-      // Update aircraft positions
-      this.demoAircraft.forEach(ac => {
-        ac.lat += ac.dLat;
-        ac.lon += ac.dLon;
-        ac.track = (ac.track + (Math.random() - 0.5) * 2 + 360) % 360;
-        ac.altitude += (Math.random() - 0.5) * 100;
-        ac.altitude = Math.max(1000, Math.min(45000, ac.altitude));
-        ac.speed += (Math.random() - 0.5) * 5;
-        ac.lastSeen = Date.now();
-        this.onAircraft({ ...ac });
-      });
-
-      // Occasionally add/remove aircraft
-      if (tick % 20 === 0 && this.demoAircraft.length < 15) {
-        this.demoAircraft.push(this._generateRandomAircraft());
-      }
-      if (tick % 35 === 0 && this.demoAircraft.length > 5) {
-        const removed = this.demoAircraft.splice(0, 1)[0];
-        this.onTimeout(removed.hex);
-      }
-    }, 2000);
-  }
-
-  _generateDemoFleet() {
-    const fleet = [];
-    const count = 8;
-    for (let i = 0; i < count; i++) {
-      fleet.push(this._generateRandomAircraft());
+  _loop() {
+    this._poll();
+    if (this.running) {
+      this.timer = setTimeout(() => this._loop(), this.pollMs);
     }
-    return fleet;
   }
 
-  _generateRandomAircraft() {
-    const callsigns = ['BAW', 'EZY', 'RYR', 'VIR', 'DLH', 'AFR', 'KLM', 'IBE', 'TOM', 'TCX'];
-    const types = ['A320', 'B737', 'A321', 'B738', 'A319', 'E175', 'B77W', 'A359', 'A220', 'B789'];
-    const cs = callsigns[Math.floor(Math.random() * callsigns.length)];
-    const num = Math.floor(Math.random() * 9000 + 1000);
-    const type = types[Math.floor(Math.random() * types.length)];
-    const alt = Math.floor(Math.random() * 35000 + 5000);
+  _poll() {
+    let stat;
+    try {
+      stat = fs.statSync(this.jsonPath);
+    } catch (e) {
+      if (this.connected) console.log(`[ADS-B] ${this.jsonPath} not present — decoder offline`);
+      this.connected = false;
+      return;
+    }
 
-    // UK-centric coordinates
-    const lat = 50 + Math.random() * 8;
-    const lon = -5 + Math.random() * 10;
-    const track = Math.random() * 360;
-    const speed = 250 + Math.random() * 300;
+    const ageSec = (Date.now() - stat.mtimeMs) / 1000;
+    if (ageSec > STALE_FILE_SEC) {
+      if (this.connected) console.log(`[ADS-B] ${this.jsonPath} stale (${ageSec.toFixed(1)}s old) — treating as offline`);
+      this.connected = false;
+      return;
+    }
 
-    const hex = Array.from({ length: 6 }, () => '0123456789ABCDEF'[Math.floor(Math.random() * 16)]).join('');
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(this.jsonPath, 'utf8'));
+    } catch (e) {
+      // partial write — try next tick
+      return;
+    }
 
-    return {
-      hex,
-      callsign: `${cs}${num}`,
-      type,
-      altitude: alt,
-      speed: Math.round(speed),
-      track: Math.round(track),
-      lat,
-      lon,
-      vertRate: (Math.random() - 0.5) * 1000,
-      squawk: Math.floor(Math.random() * 7777).toString().padStart(4, '0'),
-      lastSeen: Date.now(),
-      dLat: (Math.cos((track * Math.PI) / 180) * speed) / 111320 / 1800,
-      dLon: (Math.sin((track * Math.PI) / 180) * speed) / (111320 * Math.cos((lat * Math.PI) / 180)) / 1800,
-      messages: Math.floor(Math.random() * 5000)
-    };
+    if (!this.connected) {
+      console.log('[ADS-B] connected — readsb output is live');
+      this.connected = true;
+    }
+
+    const list = Array.isArray(parsed.aircraft) ? parsed.aircraft : [];
+    const nowMs = Date.now();
+    const seenHexes = new Set();
+
+    for (const ac of list) {
+      const hex = (ac.hex || '').toUpperCase();
+      if (!hex) continue;
+      seenHexes.add(hex);
+
+      // readsb's "seen" is seconds since last message; skip very stale entries.
+      if (typeof ac.seen === 'number' && ac.seen > 30) continue;
+
+      const lat = typeof ac.lat === 'number' ? ac.lat : null;
+      const lon = typeof ac.lon === 'number' ? ac.lon : null;
+      const alt = typeof ac.alt_baro === 'number' ? ac.alt_baro
+                : typeof ac.alt_geom === 'number' ? ac.alt_geom
+                : null;
+
+      const aircraft = {
+        hex,
+        callsign: (ac.flight || '').trim() || null,
+        type: ac.t || ac.category || null,
+        altitude: alt,
+        speed: typeof ac.gs === 'number' ? ac.gs : null,
+        track: typeof ac.track === 'number' ? ac.track : null,
+        lat,
+        lon,
+        vertRate: typeof ac.baro_rate === 'number' ? ac.baro_rate
+                : typeof ac.geom_rate === 'number' ? ac.geom_rate
+                : null,
+        squawk: ac.squawk || null,
+        rssi: typeof ac.rssi === 'number' ? ac.rssi : null,
+        messages: typeof ac.messages === 'number' ? ac.messages : 0,
+        lastSeen: nowMs - Math.floor((ac.seen || 0) * 1000)
+      };
+
+      this.tracked.set(hex, { lastSeen: nowMs });
+      this.onAircraft(aircraft);
+    }
+
+    // Emit timeouts for tracked aircraft that haven't been seen in a while.
+    for (const [hex, info] of this.tracked.entries()) {
+      if (seenHexes.has(hex)) continue;
+      if (nowMs - info.lastSeen > SEEN_GRACE_SEC * 1000) {
+        this.tracked.delete(hex);
+        try { this.onTimeout(hex); } catch (e) { /* ignore */ }
+      }
+    }
   }
 }
 

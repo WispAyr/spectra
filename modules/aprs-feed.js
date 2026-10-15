@@ -1,7 +1,7 @@
 /**
  * aprs-feed.js — APRS decoder feed via direwolf AGWPE
- * Connects to direwolf's AGWPE TCP interface on port 8000
- * Falls back to demo mode with simulated APRS stations
+ * Connects to direwolf's AGWPE TCP interface on port 8000.
+ * No data is emitted unless the decoder is reachable.
  */
 
 const net = require('net');
@@ -13,8 +13,7 @@ class AprsFeed {
     this.onMessage = callbacks.onMessage;
     this.socket = null;
     this.running = false;
-    this.demoMode = false;
-    this.demoInterval = null;
+    this.connected = false;
     this.buffer = Buffer.alloc(0);
   }
 
@@ -27,7 +26,6 @@ class AprsFeed {
   stop() {
     this.running = false;
     if (this.socket) this.socket.destroy();
-    if (this.demoInterval) clearInterval(this.demoInterval);
     console.log('[APRS] Feed stopped');
   }
 
@@ -37,7 +35,7 @@ class AprsFeed {
 
     this.socket.connect(this.config.agwpePort, '127.0.0.1', () => {
       console.log('[APRS] Connected to direwolf AGWPE');
-      this.demoMode = false;
+      this.connected = true;
       this._sendAgwpeRegistration();
     });
 
@@ -46,18 +44,18 @@ class AprsFeed {
       this._parseAgwpe();
     });
 
-    this.socket.on('error', () => {
-      if (!this.demoMode) {
-        console.log('[APRS] direwolf not available — starting demo mode');
-        this._startDemoMode();
+    this.socket.on('error', (err) => {
+      if (this.connected) {
+        console.log(`[APRS] socket error: ${err.code || err.message}`);
       }
+      this.connected = false;
       this.socket.destroy();
       if (this.running) setTimeout(() => this._connectAgwpe(), 20000);
     });
 
     this.socket.on('timeout', () => {
+      this.connected = false;
       this.socket.destroy();
-      if (!this.demoMode) this._startDemoMode();
     });
   }
 
@@ -128,45 +126,6 @@ class AprsFeed {
     }
   }
 
-  _startDemoMode() {
-    this.demoMode = true;
-    const stations = this._generateDemoStations();
-    let tick = 0;
-
-    // Initial burst
-    stations.forEach(s => this.onStation(s));
-
-    this.demoInterval = setInterval(() => {
-      tick++;
-      // Beacon random station
-      const s = stations[Math.floor(Math.random() * stations.length)];
-      s.lat += (Math.random() - 0.5) * 0.001;
-      s.lon += (Math.random() - 0.5) * 0.001;
-      s.lastSeen = Date.now();
-      this.onStation({ ...s });
-
-      // Occasional message
-      if (tick % 8 === 0) {
-        const msgs = ['73s de the road!', 'QRV 144.800', 'Hello from van!', 'In transit North'];
-        this.onMessage({
-          callsign: s.callsign,
-          info: msgs[Math.floor(Math.random() * msgs.length)],
-          timestamp: Date.now()
-        });
-      }
-    }, 8000);
-  }
-
-  _generateDemoStations() {
-    const callsigns = ['M0ABC-9', 'G4XYZ-7', 'MW0DEF-1', 'G1HIJ-5', '2E0KLM-9', 'M7NOP-3'];
-    return callsigns.map((cs, i) => ({
-      callsign: cs,
-      lat: 51.5 + (Math.random() - 0.5) * 4,
-      lon: -1.5 + (Math.random() - 0.5) * 6,
-      comment: ['Mobile', 'Home Station', 'Fill-in Digipeater', 'iGate', 'Mobile', 'Tracker'][i],
-      lastSeen: Date.now() - Math.random() * 60000
-    }));
-  }
 }
 
 module.exports = AprsFeed;

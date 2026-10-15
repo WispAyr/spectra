@@ -4,3 +4,4 @@ recordings/
 *.db
 npm-debug.log*
 .env
+*.bak-*
