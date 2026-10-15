@@ -38,6 +38,15 @@ class SecondDemod extends EventEmitter {
     this.chanCutHz = opts.chanCutHz || 6000;
     this._fir = SecondDemod.lowpass(opts.chanTaps || 95, this.chanCutHz / (this.fsIn / (opts.decim || 50)));
     this._hI = new Float64Array(this._fir.length); this._hQ = new Float64Array(this._fir.length); this._hP = 0;
+    // Voice audio chain (15 Oct 2026). The old "de-emphasis" was a one-pole at ~3.8 kHz and the "LPF" ~5.8 kHz, so
+    // ch2 passed hiss to 8 kHz with no NFM de-emphasis: 7 % of clip energy above 3 kHz vs 1 % on the SDRconnect
+    // tower feed. Now: 750 us de-emphasis, 250 Hz high-pass (CTCSS/DC), 3.2 kHz FIR low-pass, then make-up gain.
+    const fsA = this.fsIn / (opts.decim || 50);
+    this._aDe = 1 - Math.exp(-1 / (fsA * (opts.deemphUs || 750) * 1e-6));
+    this._aHp = Math.exp(-2 * Math.PI * (opts.audioHpHz || 250) / fsA);
+    this._afir = SecondDemod.lowpass(opts.audioTaps || 63, (opts.audioLpHz || 3200) / fsA);
+    this._ah = new Float64Array(this._afir.length); this._aP = 0; this._hpX = 0; this._hpY = 0;
+    this.makeup = opts.makeup || 4.0;              // de-emphasis costs ~12 dB at 1 kHz
     this.gain = opts.gain != null ? opts.gain : 1.0;
     this.audioScale = opts.audioScale || 11000;      // rad -> int16 amplitude
 
@@ -168,9 +177,14 @@ class SecondDemod extends EventEmitter {
 
         dc = 0.9995 * dc + 0.0005 * ang;         // remove carrier offset
         const a = ang - dc;
-        deemph = deemph + 0.45 * (a - deemph);   // de-emphasis
-        lpf = lpf + 0.6 * (deemph - lpf);        // gentle audio LPF
-        let smp = lpf * this.audioScale * this.gain;
+        deemph = deemph + this._aDe * (a - deemph);          // 750 us NFM de-emphasis
+        const hpo = this._aHp * (this._hpY + deemph - this._hpX); // 250 Hz high-pass
+        this._hpX = deemph; this._hpY = hpo;
+        const ah = this._ah, af = this._afir, AL = af.length;   // 3.2 kHz voice low-pass
+        let ap = this._aP; ah[ap] = hpo; lpf = 0;
+        for (let t = 0, j = ap; t < AL; t++) { lpf += af[t] * ah[j]; if (--j < 0) j = AL - 1; }
+        this._aP = (ap + 1) % AL;
+        let smp = lpf * this.audioScale * this.gain * this.makeup;
         if (smp > 32767) smp = 32767; else if (smp < -32768) smp = -32768;
         out[outN++] = smp | 0;
       }
