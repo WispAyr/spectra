@@ -95,6 +95,10 @@ class SdrManager extends EventEmitter {
     }
 
     this.ws.on("open", () => {
+      // Tower-audio bandwidth gate (15 Oct 2026): after every (re)connect the device sits on its 192 kHz default until
+      // our filter_bandwidth is confirmed. Hold demodulated audio until the device REPORTS the configured width, so the
+      // wide window (adjacent fire channel etc.) never reaches listeners. Fails open after 20 s so audio is never lost.
+      this._bwConfirmed = false; this._bwGateSince = Date.now(); this._bwGateDropped = 0;
       console.log("[SDR] SDRconnect WS open — initialising device");
       this.connected = true;
       this._spectrumSeenThisConn = false;
@@ -236,6 +240,8 @@ class SdrManager extends EventEmitter {
           value: String(this.config.bandwidth), device: "primary",
         });
       }, 600);
+      setTimeout(() => this._send({ event_type: "get_property", property: "filter_bandwidth", device: "primary" }), 1200);
+      setTimeout(() => this._send({ event_type: "get_property", property: "filter_bandwidth", device: "primary" }), 3000);
     }
   }
 
@@ -378,6 +384,11 @@ class SdrManager extends EventEmitter {
           const _bw = parseFloat(val);
           this.filterBandwidth = Number.isFinite(_bw) ? _bw : null;
           const _want = this.config.bandwidth;
+          if (_want && Number.isFinite(_bw)) {
+            const _ok = Math.abs(_bw - _want) <= 1;
+            if (_ok && this._bwConfirmed === false) console.log("[SDR] filter_bandwidth confirmed " + _bw + " - audio released (held " + (Date.now() - this._bwGateSince) + " ms, dropped " + (this._bwGateDropped || 0) + " frames)");
+            this._bwConfirmed = _ok;
+          }
           if (_want && Number.isFinite(_bw) && Math.abs(_bw - _want) > 1) {
             console.log("[SDR] filter_bandwidth drifted " + _bw + " -> re-asserting " + _want);
             this._send({ event_type: "set_property", property: "filter_bandwidth", value: String(_want), device: "primary" });
@@ -501,6 +512,11 @@ class SdrManager extends EventEmitter {
       // Demodulated audio frame. Emit the raw payload so a WS bridge can relay
       // it to the browser for "click to listen". Keep rolling byte stats so the
       // wire format (rate / sample size) can be characterised.
+      if (this.config.bandwidth && this._bwConfirmed === false) {
+        if (Date.now() - (this._bwGateSince || 0) < 20000) { this._bwGateDropped = (this._bwGateDropped || 0) + 1; return; }
+        console.log("[SDR] filter_bandwidth not confirmed after 20 s - releasing audio anyway (fail open)");
+        this._bwConfirmed = null;
+      }
       const payload = buf.subarray(2);
       this._audioBytes = (this._audioBytes || 0) + payload.length;
       this._audioFrames = (this._audioFrames || 0) + 1;
