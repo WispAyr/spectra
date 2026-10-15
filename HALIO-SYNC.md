@@ -105,3 +105,15 @@ Patch as applied on van-halio (van tree has other uncommitted sdr-manager.js cha
            break;
          }
 ```
+
+## 2026-10-15 22:11 BST — ch2 voice audio chain (Ewan approved in chat)
+File: `modules/second-demod.js` (repo 4ce6a94, md5 fd043a18…). Restarted `pm2 restart spectra` at 22:11:33 BST; tower audio blipped ~5 s
+(SDRconnect re-init), tower-whisper and fire-whisper reconnected.
+
+- Old chain had no real NFM de-emphasis (one-pole at ~3.8 kHz) and an audio "LPF" at ~5.8 kHz, so hiss reached 8 kHz:
+  7 % of fire clip energy above 3 kHz vs 1 % on the SDRconnect tower feed.
+- Now: 750 µs de-emphasis → 250 Hz high-pass → 63-tap 3.2 kHz FIR low-pass → make-up gain ×4 (opts `deemphUs`, `audioHpHz`,
+  `audioLpHz`, `audioTaps`, `makeup`). Simulated: noise floor −10 dB, 1 kHz level about unchanged.
+- After restart: centre 455.625 (main untouched), target 455.700, squelch closed on no traffic, bridge 1 client.
+
+Rollback: `cp ~/backups/spectra-ch2-20261015-2211/second-demod.js ~/spectra/modules/ && pm2 restart spectra`
