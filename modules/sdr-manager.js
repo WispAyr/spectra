@@ -21,6 +21,14 @@ const CANARY_COOLDOWN_MS = 60000;
 // in-app rather than wait ~2-4min for the systemd nrsp-watchdog.
 const ESCALATE_STALE_MS = 90000;
 const ESCALATE_COOLDOWN_MS = 180000;
+// IQ guard (18 Oct 2026, Ewan OK 17:11 BST). SDRconnect_headless SEGVs in
+// CSharp_ICoreRadioDevice_SetIqCallbackEnabled (null device) when iq_stream_enable
+// arrives while no device is bound (core 18 Oct 13:47). So iq_stream_enable is only
+// sent while a real device is held, only on a state change, coalesced, with a minimum
+// hold between sends. End state is unchanged: IQ on while config.iqStream or a consumer wants it.
+const IQ_SETTLE_MS = 3000;     // after the device is (re)selected, before IQ may be enabled
+const IQ_DEBOUNCE_MS = 1500;   // coalesce consumer open/close churn
+const IQ_MIN_HOLD_MS = 5000;   // minimum time between two iq_stream_enable sends
 
 class SdrManager extends EventEmitter {
   constructor(config, onStatus) {
@@ -78,6 +86,12 @@ class SdrManager extends EventEmitter {
     this.deviceVariant = this.config.deviceVariant || null;
     this.validDevices = [];
     this.iqWanted = false;
+    this._deviceReady = false;    // a real (serial, non-IQ-File) device is selected and streaming was enabled
+    this._deviceReadyAt = 0;
+    this._iqSent = null;          // last iq_stream_enable value sent this connection (null = not yet)
+    this._iqLastSendAt = 0;
+    this._iqTimer = null;
+    this._iqGuard = { sends: 0, skippedNoDevice: 0, coalesced: 0, deferredHold: 0 };
   }
 
   connect() {
@@ -123,6 +137,8 @@ class SdrManager extends EventEmitter {
       const wasConnected = this.connected;
       this.connected = false;
       this._serialSelected = false;
+      this._deviceReady = false; this._iqSent = null;
+      if (this._iqTimer) { clearTimeout(this._iqTimer); this._iqTimer = null; }
       this._appliedDemod = false;
       this._appliedSquelch = false;
       this._appliedVolume = false;
@@ -161,9 +177,10 @@ class SdrManager extends EventEmitter {
     // signal_snr property events. Audio binary frames (0x0001) feed the
     // audio-ws-bridge.
     this._send({ event_type: "audio_stream_enable", value: "true", device: "primary" });
-    if (this.config.iqStream || this.iqWanted) {
-      this._send({ event_type: "iq_stream_enable", value: "true", device: "primary" });
-    }
+    // IQ guard: don't enable IQ in the same breath as device selection; mark the device
+    // held and let the guarded reconcile enable it once settled (same end state as before).
+    this._deviceReady = true; this._deviceReadyAt = Date.now(); this._iqSent = null;
+    this._scheduleIqReconcile(IQ_SETTLE_MS);
     setTimeout(() => this._syncDemodState(), 2000);
   }
 
@@ -284,6 +301,8 @@ class SdrManager extends EventEmitter {
   // backstop (IQ-file cold-boot + audio-only wedge the spectrum canary can't see).
   _escalateCheck() {
     if (!this._everSawSpectrum || this._escalating) return;
+    // 2026-10-17 (Ewan OK): nrsp-watchdog.timer is the single sdrconnect restarter. Remove this flag file to re-enable.
+    try { if (require("fs").existsSync("/etc/spectra/no-headless-escalation")) return; } catch (_) {}
     const now = Date.now();
     if (now - this.lastSpectrumAt < ESCALATE_STALE_MS) return;
     if (now - (this._lastEscalate || 0) < ESCALATE_COOLDOWN_MS) return;
@@ -346,6 +365,17 @@ class SdrManager extends EventEmitter {
       switch (prop) {
         case "active_device":
           this.activeDevice = val;
+          {
+            // IQ guard: track whether a real device is still held.
+            const _real = !!val && /\(\d+\)/.test(String(val)) && !/IQ File/i.test(String(val));
+            if (!_real && this._deviceReady) {
+              this._deviceReady = false; this._iqSent = null;
+              console.log("[SDR] device not held (" + JSON.stringify(val) + ") - IQ commands held back");
+            } else if (_real && this._serialSelected && !this._deviceReady && this._deviceReadyAt) {
+              this._deviceReady = true; this._iqSent = null;
+              this._scheduleIqReconcile(IQ_SETTLE_MS);
+            }
+          }
           if (val && !this._serialSelected) {
             const m = val.match(/\((\d+)\)/);
             if (m) {
@@ -614,13 +644,39 @@ class SdrManager extends EventEmitter {
   }
 
   sendRaw(obj) {
+    // IQ guard: raw iq_stream_enable goes through the guarded path too.
+    if (obj && obj.event_type === "iq_stream_enable") { this.setIqStream(String(obj.value) === "true"); return; }
     this._send(obj);
   }
 
   // Toggle the Full-IQ stream on demand (used to gate the 2nd-channel demod).
   setIqStream(on) {
     this.iqWanted = !!on;
-    this._send({ event_type: "iq_stream_enable", value: on ? "true" : "false", device: "primary" });
+    this._scheduleIqReconcile(IQ_DEBOUNCE_MS);
+  }
+
+  _scheduleIqReconcile(delayMs) {
+    if (this._iqTimer) { this._iqGuard.coalesced++; clearTimeout(this._iqTimer); }
+    this._iqTimer = setTimeout(() => { this._iqTimer = null; this._reconcileIq(); }, Math.max(0, delayMs));
+    if (this._iqTimer.unref) this._iqTimer.unref();
+  }
+
+  // Send iq_stream_enable only when: connected, a real device is held, the wanted state
+  // differs from what was last sent, and the minimum hold has passed. Otherwise wait;
+  // device (re)selection re-runs this.
+  _reconcileIq() {
+    const want = !!(this.config.iqStream || this.iqWanted);
+    const dev = String(this.activeDevice || "");
+    if (!this.connected || !this._serialSelected || !this._deviceReady || /IQ File/i.test(dev) || !/\(\d+\)/.test(dev)) {
+      this._iqGuard.skippedNoDevice++; return;
+    }
+    if (this._iqSent === null && !want) { this._iqSent = false; return; } // fresh device: IQ is off by default (as before)
+    if (this._iqSent === want) return;
+    const wait = IQ_MIN_HOLD_MS - (Date.now() - this._iqLastSendAt);
+    if (wait > 0) { this._iqGuard.deferredHold++; this._scheduleIqReconcile(wait); return; }
+    this._iqSent = want; this._iqLastSendAt = Date.now(); this._iqGuard.sends++;
+    console.log("[SDR] iq_stream_enable " + want + " (guarded)");
+    this._send({ event_type: "iq_stream_enable", value: want ? "true" : "false", device: "primary" });
   }
 
   setLna(state) {
@@ -660,6 +716,7 @@ class SdrManager extends EventEmitter {
     return {
       connected: this.connected,
       activeDevice: this.activeDevice,
+      iqGuard: { ...this._iqGuard, deviceReady: this._deviceReady, iqWanted: this.iqWanted, iqSent: this._iqSent },
       frequency: this.config.frequency,
       vfoFrequency: this.vfoFrequency,
       bandwidth: this.config.bandwidth,
