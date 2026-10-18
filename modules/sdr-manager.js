@@ -284,6 +284,8 @@ class SdrManager extends EventEmitter {
   // backstop (IQ-file cold-boot + audio-only wedge the spectrum canary can't see).
   _escalateCheck() {
     if (!this._everSawSpectrum || this._escalating) return;
+    // 2026-10-17 (Ewan OK): nrsp-watchdog.timer is the single sdrconnect restarter. Remove this flag file to re-enable.
+    try { if (require("fs").existsSync("/etc/spectra/no-headless-escalation")) return; } catch (_) {}
     const now = Date.now();
     if (now - this.lastSpectrumAt < ESCALATE_STALE_MS) return;
     if (now - (this._lastEscalate || 0) < ESCALATE_COOLDOWN_MS) return;
